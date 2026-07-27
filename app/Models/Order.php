@@ -21,5 +21,23 @@ class Order extends Model {
     {
         return $this->hasMany(OrderFile::class, 'guid', 'guid');
     }
+
+    public function exports()
+    {
+        return $this->belongsToMany(
+            \App\Models\OrderExport::class,
+            'order_export_order',
+            'order_id',
+            'order_export_id'
+        )->withTimestamps();
+    }
+
+    public function ttnBatchEntries()
+    {
+        return $this->hasMany(
+            \App\Models\TtnBatchOrder::class,
+            'order_id'
+        );
+    }
 }
 

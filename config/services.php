@@ -35,4 +35,56 @@ return [
         'jwt_token' => env('API_TOKEN_JWT'),
     ],
 
+    'order_reports' => [
+        'recipient' => env('ORDER_REPORT_EMAIL'),
+    ],
+
+    'nova_poshta' => [
+        'api_key' => env('NOVA_POSHTA_API_KEY'),
+
+        'api_url' => env(
+            'NOVA_POSHTA_API_URL',
+            'https://api.novaposhta.ua/v2.0/json/'
+        ),
+
+        'sender_ref' => env(
+            'NOVA_POSHTA_SENDER_REF'
+        ),
+
+        'contact_sender_ref' => env(
+            'NOVA_POSHTA_CONTACT_SENDER_REF'
+        ),
+
+        'sender_address_ref' => env(
+            'NOVA_POSHTA_SENDER_ADDRESS_REF'
+        ),
+
+        'sender_city_ref' => env(
+            'NOVA_POSHTA_SENDER_CITY_REF'
+        ),
+
+        'sender_phone' => env(
+            'NOVA_POSHTA_SENDER_PHONE'
+        ),
+
+        'sender_location_type' => env(
+            'NOVA_POSHTA_SENDER_LOCATION_TYPE',
+            'Warehouse'
+        ),
+
+        'payer_type' => env(
+            'NOVA_POSHTA_PAYER_TYPE',
+            'Sender'
+        ),
+
+        'payment_method' => env(
+            'NOVA_POSHTA_PAYMENT_METHOD',
+            'Cash'
+        ),
+
+        'cargo_type' => env(
+            'NOVA_POSHTA_CARGO_TYPE',
+            'Cargo'
+        ),
+    ],
 ];
