@@ -101,13 +101,18 @@
 
                     <div class="col-md-5 mb-2">
                         <label class="form-label">
-                            Email отримувача
+                            Email отримувача:
+                        </label><br>
+                        <label class="form-label">
+                            {{ old(
+                                'recipient_email',
+                                config('services.order_reports.recipient')
+                            ) }}
                         </label>
 
                         <input
-                            type="email"
+                            type="hidden"
                             name="recipient_email"
-                            class="form-control"
                             value="{{ old(
                                 'recipient_email',
                                 config('services.order_reports.recipient')

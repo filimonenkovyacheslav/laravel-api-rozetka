@@ -7,6 +7,8 @@ use App\Models\ProductDimension;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
+use RuntimeException;
+use Throwable;
 
 class ProductDimensionController extends Controller
 {
@@ -320,5 +322,534 @@ class ProductDimensionController extends Controller
                 ]);
             }
         }
+    }
+
+    public function importCsv(Request $request)
+    {
+        $request->validate([
+            'csv_file' => [
+                'required',
+                'file',
+                'max:10240',
+            ],
+        ], [
+            'csv_file.required' =>
+                'Оберіть CSV-файл для імпорту.',
+
+            'csv_file.file' =>
+                'Не вдалося прочитати завантажений файл.',
+
+            'csv_file.max' =>
+                'Розмір CSV-файлу не повинен перевищувати 10 МБ.',
+        ]);
+
+        $file = $request->file('csv_file');
+
+        $extension = strtolower(
+            (string) $file->getClientOriginalExtension()
+        );
+
+        if ($extension !== 'csv') {
+            return back()->with(
+                'error',
+                'Потрібно завантажити файл у форматі CSV.'
+            );
+        }
+
+        $handle = fopen(
+            $file->getRealPath(),
+            'rb'
+        );
+
+        if ($handle === false) {
+            return back()->with(
+                'error',
+                'Не вдалося відкрити CSV-файл.'
+            );
+        }
+
+        try {
+            $header = fgetcsv(
+                $handle,
+                0,
+                ','
+            );
+
+            if (!is_array($header)) {
+                throw new RuntimeException(
+                    'CSV-файл не містить заголовка.'
+                );
+            }
+
+            $header = array_map(function ($value) {
+                return trim(
+                    preg_replace(
+                        '/^\xEF\xBB\xBF/',
+                        '',
+                        (string) $value
+                    )
+                );
+            }, $header);
+
+            $expectedHeader =
+                $this->productDimensionCsvHeader();
+
+            if ($header !== $expectedHeader) {
+                throw new RuntimeException(
+                    'Структура CSV-файлу не відповідає шаблону. ' .
+                    'Очікується 26 колонок від "Артикул Розетки" ' .
+                    'до "Висота 6, см".'
+                );
+            }
+
+            $records = [];
+            $seenArticles = [];
+            $conflicts = [];
+
+            $lineNumber = 1;
+
+            while (
+                ($row = fgetcsv($handle, 0, ',')) !== false
+            ) {
+                $lineNumber++;
+
+                /*
+                 * Пропускаем полностью пустые строки.
+                 */
+                $hasValues = false;
+
+                foreach ($row as $value) {
+                    if (trim((string) $value) !== '') {
+                        $hasValues = true;
+                        break;
+                    }
+                }
+
+                if (!$hasValues) {
+                    continue;
+                }
+
+                if (count($row) !== count($expectedHeader)) {
+                    throw new RuntimeException(
+                        'Рядок ' . $lineNumber .
+                        ' містить ' . count($row) .
+                        ' колонок замість ' .
+                        count($expectedHeader) . '.'
+                    );
+                }
+
+                $record =
+                    $this->parseProductDimensionCsvRow(
+                        $row,
+                        $lineNumber
+                    );
+
+                $article = $record['rz_code'];
+
+                $signature = json_encode(
+                    $record,
+                    JSON_UNESCAPED_UNICODE |
+                    JSON_UNESCAPED_SLASHES
+                );
+
+                if (isset($seenArticles[$article])) {
+                    /*
+                     * Полностью одинаковую повторную строку
+                     * можно просто проигнорировать.
+                     */
+                    if (
+                        $seenArticles[$article]['signature']
+                        === $signature
+                    ) {
+                        continue;
+                    }
+
+                    $conflicts[] =
+                        'Артикул ' . $article .
+                        ': рядки ' .
+                        $seenArticles[$article]['line'] .
+                        ' та ' . $lineNumber .
+                        ' містять різні товари.';
+
+                    continue;
+                }
+
+                $seenArticles[$article] = [
+                    'line' => $lineNumber,
+                    'signature' => $signature,
+                ];
+
+                $records[] = $record;
+            }
+        } catch (Throwable $e) {
+            fclose($handle);
+
+            report($e);
+
+            return back()->with(
+                'error',
+                'Помилка перевірки CSV: ' .
+                $e->getMessage()
+            );
+        }
+
+        fclose($handle);
+
+        if (!empty($conflicts)) {
+            return back()->with(
+                'error',
+                'Імпорт зупинено через дублікати: ' .
+                implode(' ', $conflicts)
+            );
+        }
+
+        if (empty($records)) {
+            return back()->with(
+                'error',
+                'CSV-файл не містить товарів для імпорту.'
+            );
+        }
+
+        $createdCount = 0;
+        $updatedCount = 0;
+        $placesCount = 0;
+
+        try {
+            DB::transaction(function () use (
+                $records,
+                &$createdCount,
+                &$updatedCount,
+                &$placesCount
+            ) {
+                foreach ($records as $record) {
+                    $firstPlace = $record['places'][0];
+
+                    $product = ProductDimension::query()
+                        ->where(
+                            'rz_code',
+                            $record['rz_code']
+                        )
+                        ->first();
+
+                    if ($product) {
+                        $updatedCount++;
+                    } else {
+                        $product = new ProductDimension();
+                        $createdCount++;
+                    }
+
+                    /*
+                     * Первое грузовое место хранится
+                     * в основной таблице product_dimensions.
+                     */
+                    $product->fill([
+                        'rz_code' =>
+                            $record['rz_code'],
+
+                        'name' =>
+                            $record['name'],
+
+                        'weight' =>
+                            $firstPlace['weight'],
+
+                        'length' =>
+                            $firstPlace['length'],
+
+                        'width' =>
+                            $firstPlace['width'],
+
+                        'height' =>
+                            $firstPlace['height'],
+                    ]);
+
+                    $product->save();
+
+                    /*
+                     * При повторном импорте полностью заменяем
+                     * старый список дополнительных мест.
+                     */
+                    $product->places()->delete();
+
+                    /*
+                     * Все грузовые места, включая место №1,
+                     * хранятся в product_dimension_places.
+                     *
+                     * Основные поля product_dimensions также оставляем
+                     * заполненными данными первого места для совместимости
+                     * со старым кодом.
+                     */
+                    foreach ($record['places'] as $place) {
+                        $product->places()->create([
+                            'place_number' =>
+                                $place['place_number'],
+
+                            'weight' =>
+                                $place['weight'],
+
+                            'length' =>
+                                $place['length'],
+
+                            'width' =>
+                                $place['width'],
+
+                            'height' =>
+                                $place['height'],
+                        ]);
+
+                        $placesCount++;
+                    }
+                }
+            });
+        } catch (Throwable $e) {
+            report($e);
+
+            return back()->with(
+                'error',
+                'Не вдалося імпортувати товари: ' .
+                $e->getMessage()
+            );
+        }
+
+        return back()->with(
+            'success',
+            'Імпорт завершено. Створено товарів: ' .
+            $createdCount .
+            ', оновлено: ' .
+            $updatedCount .
+            ', додаткових місць: ' .
+            $placesCount . '.'
+        );
+    }
+
+    private function productDimensionCsvHeader()
+    {
+        return [
+            'Артикул Розетки',
+            'Назва товару',
+
+            'Вага, кг',
+            'Довжина, см',
+            'Ширина, см',
+            'Висота, см',
+
+            'Вага 2, кг',
+            'Довжина 2, см',
+            'Ширина 2, см',
+            'Висота 2, см',
+
+            'Вага 3, кг',
+            'Довжина 3, см',
+            'Ширина 3, см',
+            'Висота 3, см',
+
+            'Вага 4, кг',
+            'Довжина 4, см',
+            'Ширина 4, см',
+            'Висота 4, см',
+
+            'Вага 5, кг',
+            'Довжина 5, см',
+            'Ширина 5, см',
+            'Висота 5, см',
+
+            'Вага 6, кг',
+            'Довжина 6, см',
+            'Ширина 6, см',
+            'Висота 6, см',
+        ];
+    }
+
+    private function parseProductDimensionCsvRow(
+        array $row,
+        $lineNumber
+    ) {
+        $article = trim(
+            preg_replace(
+                '/^\xEF\xBB\xBF/',
+                '',
+                (string) $row[0]
+            )
+        );
+
+        $name = trim(
+            (string) $row[1]
+        );
+
+        if ($article === '') {
+            throw new RuntimeException(
+                'У рядку ' . $lineNumber .
+                ' не вказано артикул Розетки.'
+            );
+        }
+
+        if ($name === '') {
+            throw new RuntimeException(
+                'У рядку ' . $lineNumber .
+                ' не вказано назву товару.'
+            );
+        }
+
+        $places = [];
+
+        for ($placeNumber = 1; $placeNumber <= 6; $placeNumber++) {
+            $offset = 2 + (($placeNumber - 1) * 4);
+
+            $place = $this->parseCsvPlace(
+                [
+                    $row[$offset],
+                    $row[$offset + 1],
+                    $row[$offset + 2],
+                    $row[$offset + 3],
+                ],
+                $lineNumber,
+                $placeNumber
+            );
+
+            if ($place !== null) {
+                $places[] = $place;
+            }
+        }
+
+        if (empty($places)) {
+            throw new RuntimeException(
+                'У рядку ' . $lineNumber .
+                ' не вказано жодного вантажного місця.'
+            );
+        }
+
+        /*
+         * Запрещаем пропуски:
+         * нельзя заполнить место 3, оставив пустым место 2.
+         */
+        foreach ($places as $index => $place) {
+            $expectedNumber = $index + 1;
+
+            if (
+                (int) $place['place_number']
+                !== $expectedNumber
+            ) {
+                throw new RuntimeException(
+                    'У рядку ' . $lineNumber .
+                    ' порушено послідовність вантажних місць.'
+                );
+            }
+        }
+
+        return [
+            'rz_code' => $article,
+            'name' => $name,
+            'places' => $places,
+        ];
+    }
+
+    private function parseCsvPlace(
+        array $values,
+        $lineNumber,
+        $placeNumber
+    ) {
+        $nonEmptyCount = 0;
+
+        foreach ($values as $value) {
+            if (trim((string) $value) !== '') {
+                $nonEmptyCount++;
+            }
+        }
+
+        /*
+         * Полностью пустое дополнительное место.
+         */
+        if ($nonEmptyCount === 0) {
+            return null;
+        }
+
+        /*
+         * Если заполнена только часть габаритов —
+         * считаем строку ошибочной.
+         */
+        if ($nonEmptyCount !== 4) {
+            throw new RuntimeException(
+                'У рядку ' . $lineNumber .
+                ' вантажне місце №' . $placeNumber .
+                ' заповнено не повністю.'
+            );
+        }
+
+        return [
+            'place_number' => $placeNumber,
+
+            'weight' => $this->parseCsvPositiveNumber(
+                $values[0],
+                $lineNumber,
+                'Вага місця №' . $placeNumber
+            ),
+
+            'length' => $this->parseCsvPositiveNumber(
+                $values[1],
+                $lineNumber,
+                'Довжина місця №' . $placeNumber
+            ),
+
+            'width' => $this->parseCsvPositiveNumber(
+                $values[2],
+                $lineNumber,
+                'Ширина місця №' . $placeNumber
+            ),
+
+            'height' => $this->parseCsvPositiveNumber(
+                $values[3],
+                $lineNumber,
+                'Висота місця №' . $placeNumber
+            ),
+        ];
+    }
+
+    private function parseCsvPositiveNumber(
+        $value,
+        $lineNumber,
+        $fieldName
+    ) {
+        $normalized = trim(
+            (string) $value
+        );
+
+        $normalized = str_replace(
+            [
+                "\xC2\xA0",
+                ' ',
+                ',',
+            ],
+            [
+                '',
+                '',
+                '.',
+            ],
+            $normalized
+        );
+
+        if (
+            $normalized === ''
+            || !is_numeric($normalized)
+        ) {
+            throw new RuntimeException(
+                'У рядку ' . $lineNumber .
+                ' поле "' . $fieldName .
+                '" містить некоректне число.'
+            );
+        }
+
+        $number = (float) $normalized;
+
+        if ($number <= 0) {
+            throw new RuntimeException(
+                'У рядку ' . $lineNumber .
+                ' поле "' . $fieldName .
+                '" повинно бути більше нуля.'
+            );
+        }
+
+        return round(
+            $number,
+            3
+        );
     }
 }

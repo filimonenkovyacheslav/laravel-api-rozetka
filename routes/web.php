@@ -153,6 +153,11 @@ Route::middleware(['web', 'admin.basic'])->prefix('admin')->name('admin.')->grou
         '/ttn-batches/{batch}/order-exports/{export}',
         [OrderExportController::class, 'destroy']
     )->name('order-exports.destroy');
+
+    Route::post(
+        '/product-dimensions/import',
+        [ProductDimensionController::class, 'importCsv']
+    )->name('product-dimensions.import');
 });
 
 Route::get('/home', [App\Http\Controllers\HomeController::class, 'index'])->name('home');

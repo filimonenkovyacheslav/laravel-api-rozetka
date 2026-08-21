@@ -371,12 +371,40 @@ class TtnBatchController extends Controller
             $completedAt = now();
         }
 
+        $previousStatus = $batch->status;
         $batch->update([
             'status' => $status,
             'success_count' => $successCount,
             'failed_count' => $failedCount,
             'completed_at' => $completedAt,
         ]);
+        /*
+         * Автоматический Excel только в момент перехода
+         *
+         * ... → completed
+         *
+         * Повторное сохранение уже completed-пакета
+         * письмо не отправляет.
+         */
+        if (
+            $previousStatus !== 'completed'
+            && $status === 'completed'
+        ) {
+            try {
+                app(
+                    \App\Services\OrderReportService::class
+                )->generateAndSend(
+                    $batch,
+                    'auto:batch-completed'
+                );
+            } catch (\Throwable $e) {
+                /*
+                 * Ошибка Excel/email НЕ должна превращать
+                 * успешно сформированный пакет ТТН в failed.
+                 */
+                report($e);
+            }
+        }
 
         return [
             'success_count' => $successCount,

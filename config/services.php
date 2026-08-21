@@ -86,5 +86,10 @@ return [
             'NOVA_POSHTA_CARGO_TYPE',
             'Cargo'
         ),
+
+        'cod_mode' => env(
+            'NOVA_POSHTA_COD_MODE',
+            'backward'
+        ),
     ],
 ];

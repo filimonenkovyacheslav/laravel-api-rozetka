@@ -74,6 +74,18 @@
     }
 </style>
 
+@if(session('success'))
+    <div class="alert alert-success">
+        {{ session('success') }}
+    </div>
+@endif
+
+@if(session('error'))
+    <div class="alert alert-danger">
+        {{ session('error') }}
+    </div>
+@endif
+
 @if($errors->any())
     <div class="alert alert-danger">
         <strong>Не вдалося зберегти дані.</strong>
@@ -316,6 +328,59 @@
     </div>
 </div>
 
+<!-- <div class="card mb-4">
+    <div class="card-header">
+        <strong>Імпорт товарів із CSV</strong>
+    </div>
+
+    <div class="card-body">
+        <form
+            method="post"
+            action="{{ route(
+                'admin.product-dimensions.import'
+            ) }}"
+            enctype="multipart/form-data"
+        >
+            @csrf
+
+            <div class="form-row align-items-end">
+                <div class="col-md-8 mb-2">
+                    <label for="product-dimensions-csv">
+                        CSV-файл із габаритами товарів
+                    </label>
+
+                    <input
+                        id="product-dimensions-csv"
+                        type="file"
+                        name="csv_file"
+                        class="form-control-file"
+                        accept=".csv,text/csv"
+                        required
+                    >
+
+                    <small class="form-text text-muted">
+                        Існуючі товари з однаковим артикулом
+                        будуть оновлені. Їхні вантажні місця
+                        будуть замінені даними з CSV.
+                    </small>
+                </div>
+
+                <div class="col-md-4 mb-2">
+                    <button
+                        type="submit"
+                        class="btn btn-primary"
+                        onclick="return confirm(
+                            'Імпортувати товари та замінити їхні поточні габарити?'
+                        )"
+                    >
+                        Імпортувати CSV
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div> -->
+
 <form
     id="products-bulk-form"
     method="post"
@@ -338,7 +403,7 @@
             </span>
         </div>
 
-        <div class="table-responsive products-table-wrapper">
+        <div class="table-responsive">
             <table class="table table-sm table-bordered table-hover mb-0">
                 <thead class="thead-light">
                     <tr>

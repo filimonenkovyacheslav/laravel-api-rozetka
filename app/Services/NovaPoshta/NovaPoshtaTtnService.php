@@ -2272,20 +2272,25 @@ class NovaPoshtaTtnService
         ];
 
         /*
-         * Внутренний номер заказа Rozetka.
+         * Внутрішній номер у кабінеті Нової Пошти.
+         * Використовуємо GUID замовлення Rozetka.
          */
-        $clientBarcode = trim(
-            (string) $order->comment
+        $orderGuid = trim(
+            (string) $order->guid
         );
 
-        if ($clientBarcode !== '') {
-            $properties['InfoRegClientBarcodes'] =
-                mb_substr(
-                    $clientBarcode,
-                    0,
-                    100
-                );
+        if ($orderGuid === '') {
+            throw new RuntimeException(
+                'У замовленні не вказано GUID.'
+            );
         }
+
+        $properties['InfoRegClientBarcodes'] =
+            mb_substr(
+                $orderGuid,
+                0,
+                100
+            );
 
         /*
          * =========================================================
@@ -2560,18 +2565,37 @@ class NovaPoshtaTtnService
         );
 
         if ($cashOnDelivery > 0) {
-            $properties['BackwardDeliveryData'] = [
-                [
-                    'PayerType' =>
-                        'Recipient',
+            $codMode = trim(
+                (string) config(
+                    'services.nova_poshta.cod_mode',
+                    'backward'
+                )
+            );
 
-                    'CargoType' =>
-                        'Money',
-
-                    'RedeliveryString' =>
-                        $cashOnDelivery,
-                ],
-            ];
+            if ($codMode === 'afterpayment') {
+                /*
+                 * Контроль оплати для ФОП/компанії.
+                 */
+                $properties['AfterpaymentOnGoodsCost'] =
+                    $cashOnDelivery;
+            } elseif ($codMode === 'backward') {
+                /*
+                 * Звичайна післяплата — грошовий переказ.
+                 */
+                $properties['BackwardDeliveryData'] = [
+                    [
+                        'PayerType' => 'Recipient',
+                        'CargoType' => 'Money',
+                        'RedeliveryString' =>
+                            $cashOnDelivery,
+                    ],
+                ];
+            } else {
+                throw new RuntimeException(
+                    'Невідомий NOVA_POSHTA_COD_MODE: ' .
+                    $codMode
+                );
+            }
         }
 
         return $properties;

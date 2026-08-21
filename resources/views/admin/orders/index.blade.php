@@ -326,7 +326,7 @@
 {{-- Массовые действия --}}
 <div class="card card-body mb-3 bulk-actions-card">
     <div class="d-flex flex-wrap align-items-center">
-        <button
+        <!-- <button
             type="submit"
             form="bulk-orders-form"
             formaction="{{ route(
@@ -337,7 +337,7 @@
             class="btn btn-primary"
         >
             Завантажити нові файли
-        </button>
+        </button> -->
 
         <button
             type="submit"
@@ -348,11 +348,8 @@
             name="mode"
             value="all"
             class="btn btn-outline-primary"
-            onclick="return confirm(
-                'Повторно завантажити всі файли вибраних замовлень?'
-            )"
         >
-            Завантажити повторно
+            Завантажити файли
         </button>
 
         <button
@@ -389,7 +386,7 @@
         </span>
     </div>
     
-    <div class="table-responsive orders-table-wrapper">
+    <div class="table-responsive">
         <table class="table table-sm table-hover mb-0">
             <thead class="thead-light">
                 <tr>
