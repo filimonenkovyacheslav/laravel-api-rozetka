@@ -28,6 +28,7 @@ return new class extends Migration
             $table->string('tracking_number')->nullable();
             $table->timestamp('created_at_partner')->nullable();
             $table->timestamp('updated_at_partner')->nullable();
+            $table->timestamp('ttn_created_at')->nullable()->index();
 
             $table->timestamps();
         });

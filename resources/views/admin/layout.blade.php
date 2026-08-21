@@ -18,8 +18,20 @@
     <div class="d-flex align-items-center mb-3">
         <h3 class="mb-0 mr-3">@yield('header', 'Admin')</h3>
         <div class="ml-auto">
-            <a class="btn btn-sm btn-outline-secondary" href="{{ route('admin.orders.index') }}">Orders</a>
+            <a class="btn btn-sm btn-outline-secondary" href="{{ route('admin.orders.index') }}">Замовлення</a>
         </div>
+        <a
+            class="btn btn-sm btn-outline-secondary ml-3"
+            href="{{ route('admin.product-dimensions.index') }}"
+        >
+            Товари
+        </a>
+        <a
+            class="btn btn-sm btn-outline-secondary ml-2"
+            href="{{ route('admin.ttn-batches.index') }}"
+        >
+            Пакети ТТН
+        </a>
     </div>
 
     @if(session('ok'))

@@ -9,6 +9,9 @@ use App\Models\OrderFile;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
+use App\Services\NovaPoshta\NovaPoshtaTtnService;
+use Throwable;
+use App\Models\ProductDimension;
 
 class OrderAdminController extends Controller
 {
@@ -23,7 +26,34 @@ class OrderAdminController extends Controller
         ]);
 
         $perPage = (int) ($validated['per_page'] ?? 20);
-        $query = Order::query()->withExists('files')->orderByDesc('id');
+        $query = Order::query()
+            ->withCount('files')
+            ->withCount([
+                'files as new_files_count' => function ($query) {
+                    $query->whereNull('downloaded_at');
+                },
+            ])
+            ->orderByDesc('id');
+
+        $filesState = $request->query('files_state', '');
+
+        if ($filesState === 'new') {
+            $query->whereHas('files', function ($query) {
+                $query->whereNull('downloaded_at');
+            });
+        }
+
+        if ($filesState === 'downloaded') {
+            $query
+                ->whereHas('files')
+                ->whereDoesntHave('files', function ($query) {
+                    $query->whereNull('downloaded_at');
+                });
+        }
+
+        if ($filesState === 'none') {
+            $query->whereDoesntHave('files');
+        }
 
         if (!empty($validated['status'])) {
             $query->where('status', $validated['status']);
@@ -45,7 +75,41 @@ class OrderAdminController extends Controller
             $query->whereBetween('created_at', [$from, $to]);
         }
 
-        $orders = $query->paginate($perPage)->appends($request->query());
+        $orders = $query->with('items')->paginate($perPage)->appends($request->query());
+
+        $articles = $orders
+            ->getCollection()
+            ->flatMap(function ($order) {
+                return $order->items;
+            })
+            ->map(function ($item) {
+                return trim(
+                    (string) (
+                        $item->rz_code
+                        ?? $item->sku
+                        ?? $item->article
+                        ?? $item->offer_id
+                        ?? $item->product_id
+                        ?? ''
+                    )
+                );
+            })
+            ->filter()
+            ->unique()
+            ->values();
+
+        $productNames = ProductDimension::query()
+            ->whereIn('rz_code', $articles->all())
+            ->get([
+                'rz_code',
+                'name',
+            ])
+            ->mapWithKeys(function ($product) {
+                return [
+                    trim((string) $product->rz_code) =>
+                        trim((string) $product->name),
+                ];
+            });
 
         return view('admin.orders.index', [
             'orders' => $orders,
@@ -55,7 +119,9 @@ class OrderAdminController extends Controller
                 'from' => $validated['from'] ?? '',
                 'to' => $validated['to'] ?? '',
                 'per_page' => $perPage,
+                'files_state' => $filesState,
             ],
+            'productNames' => $productNames,
         ]);
     }
 
@@ -160,5 +226,35 @@ class OrderAdminController extends Controller
         $file->delete();
 
         return back()->with('ok', 'File deleted');
+    }
+
+    public function deleteTtn(
+        Order $order,
+        NovaPoshtaTtnService $ttnService
+    ) {
+        try {
+            $result = $ttnService->deleteForOrder(
+                $order
+            );
+
+            return redirect()
+                ->route('admin.orders.show', $order)
+                ->with(
+                    'ok',
+                    'ТТН ' .
+                    ($result['tracking_number'] ?: '') .
+                    ' успішно видалено.'
+                );
+        } catch (Throwable $e) {
+            report($e);
+
+            return redirect()
+                ->route('admin.orders.show', $order)
+                ->with(
+                    'err',
+                    'Не вдалося видалити ТТН: ' .
+                    $e->getMessage()
+                );
+        }
     }
 }

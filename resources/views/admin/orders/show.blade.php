@@ -36,6 +36,7 @@
                 <div><span class="text-muted">ID відділення:</span> <span class="mono">{{ $order->delivery_address_id }}</span></div>
                 <div><span class="text-danger">Контроль оплати:</span> <span class="text-danger">{{ $order->cash_on_delivery }}</span></div>
             </div>
+
             <div class="col-md-6">
                 <div><span class="text-muted">ТТН:</span> <span class="mono">{{ $order->tracking_number }}</span></div>
                 <div><span class="text-muted">Оплата при отриманні:</span> {{ $order->cash_on_delivery }}</div>
@@ -45,34 +46,72 @@
                     <div class="text-muted">Коментар</div>
                     <div class="border rounded p-2">{{ $order->comment }}</div>
                 </div>
-            </div>
+            </div>            
         </div>
 
         <hr>
-
         <div class="d-flex align-items-center">
-            <form method="post" action="{{ route('admin.orders.cancel', $order->id) }}" class="mr-2">
-                @csrf
-                <button class="btn btn-danger" @if($order->status === 'canceled') disabled @endif onclick="return confirm('Ви впевнені що хочете скасувати замовлення?')">
-                    Скасувати
-                </button>
-            </form>
-
-            <form method="post" action="{{ route('admin.orders.ship', $order->id) }}" class="form-inline">
-                @csrf
-                <label class="mr-2 mb-0">ТТН</label>
-                <input name="tracking_number" class="form-control mr-2" style="min-width: 260px" value="{{ old('tracking_number', $order->tracking_number) }}" @if($order->status === 'canceled') disabled @endif>
-                <button class="btn btn-success" @if($order->status === 'canceled') disabled @endif onclick="return confirm('Ви впевнені що хочете позначити як відвантажене?')">
-                    Відвантажити
-                </button>
-            </form>
-
             <div style="width: 400px; margin-left: 50px;">
                 можливі варіанти статусу:<br>
                 "created" - статус при опрацюванні замовлення,<br>
                 "updated" - статус при опрацюванні редагованого замовлення,<br>
                 "shipped" - відвантажене замовлення (є номер ТТН).   
             </div>
+        </div>
+        <hr>
+
+        <div class="d-flex align-items-center">
+            <form method="post" action="{{ route('admin.orders.cancel', $order->id) }}" class="mr-2">
+                @csrf
+                <button class="btn btn-danger" @if($order->status === 'canceled') disabled @endif onclick="return confirm('Ви впевнені що хочете скасувати замовлення?')">
+                    Скасувати замовлення
+                </button>
+            </form>
+           
+            <!-- <form method="post" action="{{ route('admin.orders.ship', $order->id) }}" class="form-inline">
+                @csrf
+                <label class="mr-2 mb-0">ТТН</label>
+                <input name="tracking_number" class="form-control mr-2" style="min-width: 260px" value="{{ old('tracking_number', $order->tracking_number) }}" @if($order->status === 'canceled') disabled @endif>
+                <button class="btn btn-success" @if($order->status === 'canceled') disabled @endif onclick="return confirm('Ви впевнені що хочете позначити як відвантажене?')">
+                    Відвантажити
+                </button>
+            </form> -->
+
+            @if(
+                !empty($order->tracking_number) &&
+                !empty($order->np_document_ref)
+            )
+                <div style="width: 400px; margin-left: 50px;">
+                    <label class="mr-2 mb-0">ТТН</label>
+                    <label class="mr-2 mb-0">{{ old('tracking_number', $order->tracking_number) }}</label>
+                </div>
+                
+                <form
+                    method="post"
+                    action="{{ route(
+                        'admin.orders.ttn.delete',
+                        $order
+                    ) }}"
+                    class="d-inline"
+                    onsubmit="
+                        return confirm(
+                            'ТТН буде видалено в Новій Пошті. ' +
+                            'Дані відправлення в замовленні також будуть очищені. ' +
+                            'Продовжити?'
+                        );
+                    "
+                >
+                    @csrf
+
+                    <button
+                        type="submit"
+                        class="btn btn-outline-danger"
+                    >
+                        Видалити ТТН
+                    </button>
+                </form>
+            @endif
+            
         </div>
         @if($order->status === 'canceled')
             <div class="text-danger mt-2">Скасоване замовлення неможливо позначити як відвантажене.</div>
@@ -120,7 +159,7 @@
     </div>
 </div>
 
-<div class="card">
+<div class="card mb-4">
     <div class="card-header"><strong>Files</strong></div>
     <div class="table-responsive">
         <table class="table table-sm mb-0">
