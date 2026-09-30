@@ -39,6 +39,20 @@ return [
         'recipient' => env('ORDER_REPORT_EMAIL'),
     ],
 
+    'rozetka' => [
+        'api_url' => env(
+            'ROZETKA_API_URL',
+            'https://api-cabinet-supplier.rozetka.com.ua'
+        ),
+
+        'jwt_token' => env('ROZETKA_API_TOKEN'),
+
+        'timeout' => (int) env(
+            'ROZETKA_API_TIMEOUT',
+            40
+        ),
+    ],
+
     'nova_poshta' => [
         'api_key' => env('NOVA_POSHTA_API_KEY'),
 
