@@ -6,8 +6,14 @@ use Illuminate\Database\Eloquent\Model;
 
 class OrderItem extends Model {
     protected $fillable = [
-        'order_id','supplier_code','rz_code','quantity','price',
-        'reserved_quantity','serial_number'
+        'order_id',
+        'supplier_code',
+        'rz_code',
+        'quantity',
+        'confirmed_quantity',
+        'price',
+        'reserved_quantity',
+        'serial_number',
     ];
 }
 
