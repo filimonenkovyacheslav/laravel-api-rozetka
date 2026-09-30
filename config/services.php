@@ -51,6 +51,11 @@ return [
             'ROZETKA_API_TIMEOUT',
             40
         ),
+
+        'sync_enabled' => filter_var(
+            env('ROZETKA_SYNC_ENABLED', false),
+            FILTER_VALIDATE_BOOLEAN
+        ),
     ],
 
     'nova_poshta' => [

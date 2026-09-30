@@ -38,6 +38,20 @@ class RozetkaOrderService
         array $filters = [],
         $dryRun = false
     ) {
+        if (
+            !$dryRun &&
+            !config(
+                'services.rozetka.sync_enabled',
+                false
+            )
+        ) {
+            throw new RuntimeException(
+                'Синхронізація Rozetka вимкнена. ' .
+                'Для запису встановіть ' .
+                'ROZETKA_SYNC_ENABLED=true.'
+            );
+        }
+        
         $page = 1;
 
         $result = [
