@@ -104,6 +104,8 @@ class RozetkaClient
         $orderId,
         array $products
     ) {
+        $this->ensureActionsEnabled();
+
         return $this->request(
             'POST',
             '/dropshipping/orders/confirm/' .
@@ -125,10 +127,12 @@ class RozetkaClient
      * @return array
      */
     public function createTtn(
-        $orderId,
+    $orderId,
         array $cargoSeats,
         $replaceExisting = false
     ) {
+        $this->ensureActionsEnabled();
+
         return $this->request(
             'POST',
             '/dropshipping/orders/ttn/' .
@@ -144,12 +148,14 @@ class RozetkaClient
     /**
      * Массовая печать маркировок.
      *
+     * API возвращает PDF/HTML файл, а не JSON.
+     *
      * @param array $payload
      * @return array
      */
     public function printMarkings(array $payload)
     {
-        return $this->request(
+        return $this->requestFile(
             'POST',
             '/dropshipping/orders/print-markings',
             $payload
@@ -180,15 +186,26 @@ class RozetkaClient
             $request = Http::withToken($this->token)
                 ->acceptJson()
                 ->asJson()
-                ->timeout($this->timeout)
-                ->retry(2, 500);
+                ->timeout($this->timeout);
 
+            /*
+             * GET-запросы безопасно повторять автоматически.
+             */
             if (strtoupper($method) === 'GET') {
-                $response = $request->get(
-                    $url,
-                    $data
-                );
+                $response = $request
+                    ->retry(2, 500)
+                    ->get(
+                        $url,
+                        $data
+                    );
             } else {
+                /*
+                 * POST автоматически НЕ повторяем.
+                 *
+                 * Особенно важно для создания ТТН:
+                 * внешний сервис мог выполнить действие,
+                 * даже если мы не получили корректный ответ.
+                 */
                 $response = $request->send(
                     strtoupper($method),
                     $url,
@@ -229,6 +246,150 @@ class RozetkaClient
         }
 
         return $result;
+    }
+
+    /**
+     * Выполнить запрос, который возвращает файл.
+     *
+     * Используется для print-markings.
+     *
+     * @param string $method
+     * @param string $path
+     * @param array $data
+     * @return array
+     */
+    private function requestFile(
+        $method,
+        $path,
+        array $data = []
+    ) {
+        $this->ensureConfigured();
+
+        $url = $this->apiUrl . '/' . ltrim(
+            $path,
+            '/'
+        );
+
+        try {
+            /*
+             * POST print-markings также не повторяем
+             * автоматически.
+             */
+            $response = Http::withToken($this->token)
+                ->withHeaders([
+                    'Accept' =>
+                        'application/pdf, text/html',
+                ])
+                ->asJson()
+                ->timeout($this->timeout)
+                ->send(
+                    strtoupper($method),
+                    $url,
+                    [
+                        'json' => $data,
+                    ]
+                );
+        } catch (Throwable $e) {
+            throw new RuntimeException(
+                'Не вдалося підключитися до API Rozetka: ' .
+                $e->getMessage(),
+                0,
+                $e
+            );
+        }
+
+        /*
+         * При ошибке API возвращает обычный JSON.
+         */
+        if (!$response->successful()) {
+            $result = $response->json();
+
+            throw new RuntimeException(
+                $this->buildErrorMessage(
+                    $response->status(),
+                    $result,
+                    $response->body()
+                )
+            );
+        }
+
+        $contentType = trim(
+            (string) $response->header(
+                'Content-Type'
+            )
+        );
+
+        $normalizedContentType =
+            strtolower($contentType);
+
+        if (
+            strpos(
+                $normalizedContentType,
+                'application/pdf'
+            ) !== 0 &&
+            strpos(
+                $normalizedContentType,
+                'text/html'
+            ) !== 0
+        ) {
+            throw new RuntimeException(
+                'API Rozetka повернув невідомий тип ' .
+                'файлу маркування: ' .
+                (
+                    $contentType !== ''
+                        ? $contentType
+                        : 'не вказано'
+                )
+            );
+        }
+
+        return [
+            /*
+             * Бинарное содержимое PDF
+             * либо HTML-строка.
+             */
+            'body' =>
+                $response->body(),
+
+            'content_type' =>
+                $contentType,
+
+            'content_disposition' =>
+                $response->header(
+                    'Content-Disposition'
+                ),
+
+            'printed' =>
+                (int) $response->header(
+                    'X-Markings-Printed'
+                ),
+
+            'skipped' =>
+                (int) $response->header(
+                    'X-Markings-Skipped'
+                ),
+        ];
+    }
+
+    /**
+     * Запретить изменяющие действия через новый API,
+     * пока они явно не включены в .env.
+     *
+     * @return void
+     */
+    private function ensureActionsEnabled()
+    {
+        if (
+            !config(
+                'services.rozetka.actions_enabled',
+                false
+            )
+        ) {
+            throw new RuntimeException(
+                'Дії через Rozetka API вимкнені. ' .
+                'ROZETKA_ACTIONS_ENABLED=false.'
+            );
+        }
     }
 
     /**
