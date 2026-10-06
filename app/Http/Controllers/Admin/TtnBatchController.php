@@ -10,6 +10,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use App\Services\NovaPoshta\NovaPoshtaTtnService;
 use Throwable;
+use App\Services\OrderTtnService;
 
 class TtnBatchController extends Controller
 {
@@ -202,7 +203,7 @@ class TtnBatchController extends Controller
      */
     public function processNext(
         TtnBatch $batch,
-        NovaPoshtaTtnService $ttnService
+        OrderTtnService $ttnService
     ) {
         /*
          * Атомарно резервируем следующую запись,
