@@ -56,6 +56,11 @@ return [
             env('ROZETKA_SYNC_ENABLED', false),
             FILTER_VALIDATE_BOOLEAN
         ),
+
+        'actions_enabled' => filter_var(
+            env('ROZETKA_ACTIONS_ENABLED', false),
+            FILTER_VALIDATE_BOOLEAN
+        ),
     ],
 
     'nova_poshta' => [
