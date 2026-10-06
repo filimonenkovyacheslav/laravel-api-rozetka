@@ -11,6 +11,206 @@ use RuntimeException;
 class RozetkaFulfillmentService
 {
     /**
+     * Обновить локальное состояние заказа
+     * актуальными данными из Rozetka.
+     *
+     * Используется перед повторными изменяющими действиями.
+     *
+     * @param Order $order
+     * @return Order
+     */
+    public function refreshFromApi(Order $order)
+    {
+        $orderId = $this->getOrderId($order);
+
+        $detail = $this->client->getOrder(
+            $orderId
+        );
+
+        DB::transaction(function () use (
+            $order,
+            $detail
+        ) {
+            if (
+                array_key_exists(
+                    'orderStatus',
+                    $detail
+                )
+            ) {
+                $order->rozetka_status =
+                    $detail['orderStatus'];
+            }
+
+            if (
+                array_key_exists(
+                    'orderNum',
+                    $detail
+                )
+            ) {
+                $order->order_num =
+                    $detail['orderNum'];
+            }
+
+            /*
+             * Не очищаем существующую локальную ТТН,
+             * если API сейчас вернул null.
+             *
+             * Но если Rozetka вернула номер —
+             * обязательно синхронизируем его.
+             */
+            $remoteTtn = trim(
+                (string) (
+                    $detail['ttn']
+                    ?? ''
+                )
+            );
+
+            if ($remoteTtn !== '') {
+                $order->tracking_number =
+                    $remoteTtn;
+
+                $order->status =
+                    'shipped';
+            }
+
+            if (
+                array_key_exists(
+                    'trackingStatusCode',
+                    $detail
+                )
+            ) {
+                $order->tracking_status_code =
+                    $detail['trackingStatusCode'];
+            }
+
+            if (
+                array_key_exists(
+                    'trackingStatus',
+                    $detail
+                )
+            ) {
+                $order->tracking_status =
+                    $detail['trackingStatus'];
+            }
+
+            if (
+                array_key_exists(
+                    'returnTtn',
+                    $detail
+                )
+            ) {
+                $order->return_ttn =
+                    $detail['returnTtn'];
+            }
+
+            if (
+                array_key_exists(
+                    'documentLink',
+                    $detail
+                )
+            ) {
+                $order->document_link =
+                    $detail['documentLink'];
+            }
+
+            if (
+                array_key_exists(
+                    'incomingInvoiceNumber',
+                    $detail
+                )
+            ) {
+                $order->incoming_invoice_number =
+                    $detail['incomingInvoiceNumber'];
+            }
+
+            if (
+                array_key_exists(
+                    'snRequired',
+                    $detail
+                )
+            ) {
+                $order->sn_required =
+                    (bool) $detail['snRequired'];
+            }
+
+            $order->rozetka_synced_at =
+                now();
+
+            $order->save();
+
+            $products =
+                isset($detail['products']) &&
+                is_array($detail['products'])
+                    ? $detail['products']
+                    : [];
+
+            foreach ($products as $product) {
+                $supplierCode = trim(
+                    (string) (
+                        $product['supplierCode']
+                        ?? ''
+                    )
+                );
+
+                if ($supplierCode === '') {
+                    continue;
+                }
+
+                $item = OrderItem::query()
+                    ->where(
+                        'order_id',
+                        $order->id
+                    )
+                    ->where(
+                        'supplier_code',
+                        $supplierCode
+                    )
+                    ->first();
+
+                if (!$item) {
+                    continue;
+                }
+
+                if (
+                    array_key_exists(
+                        'confirmedQuantity',
+                        $product
+                    )
+                ) {
+                    $item->confirmed_quantity =
+                        $product['confirmedQuantity'] !== null
+                            ? (int) $product['confirmedQuantity']
+                            : null;
+
+                    $item->reserved_quantity =
+                        $item->confirmed_quantity;
+                }
+
+                if (
+                    isset($product['serialNumbers']) &&
+                    is_array(
+                        $product['serialNumbers']
+                    )
+                ) {
+                    $item->serial_number =
+                        json_encode(
+                            array_values(
+                                $product['serialNumbers']
+                            ),
+                            JSON_UNESCAPED_UNICODE
+                        );
+                }
+
+                $item->save();
+            }
+        });
+
+        return $order->fresh([
+            'items',
+        ]);
+    }
+    
+    /**
      * @var RozetkaClient
      */
     private $client;

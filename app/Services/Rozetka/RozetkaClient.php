@@ -215,10 +215,11 @@ class RozetkaClient
                 );
             }
         } catch (Throwable $e) {
-            throw new RuntimeException(
+            throw new RozetkaApiException(
                 'Не вдалося підключитися до API Rozetka: ' .
                 $e->getMessage(),
-                0,
+                null,
+                true,
                 $e
             );
         }
@@ -226,12 +227,14 @@ class RozetkaClient
         $result = $response->json();
 
         if (!$response->successful()) {
-            throw new RuntimeException(
+            throw new RozetkaApiException(
                 $this->buildErrorMessage(
                     $response->status(),
                     $result,
                     $response->body()
-                )
+                ),
+                $response->status(),
+                false
             );
         }
 
@@ -290,26 +293,24 @@ class RozetkaClient
                     ]
                 );
         } catch (Throwable $e) {
-            throw new RuntimeException(
+            throw new RozetkaApiException(
                 'Не вдалося підключитися до API Rozetka: ' .
                 $e->getMessage(),
-                0,
+                null,
+                true,
                 $e
             );
         }
 
-        /*
-         * При ошибке API возвращает обычный JSON.
-         */
         if (!$response->successful()) {
-            $result = $response->json();
-
-            throw new RuntimeException(
+            throw new RozetkaApiException(
                 $this->buildErrorMessage(
                     $response->status(),
                     $result,
                     $response->body()
-                )
+                ),
+                $response->status(),
+                false
             );
         }
 
