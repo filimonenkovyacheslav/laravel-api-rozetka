@@ -182,8 +182,6 @@ class RozetkaFulfillmentService
                             ? (int) $product['confirmedQuantity']
                             : null;
 
-                    $item->reserved_quantity =
-                        $item->confirmed_quantity;
                 }
 
                 if (
@@ -639,7 +637,7 @@ class RozetkaFulfillmentService
             $order
         );
 
-        $cargoSeats = $service->previewCargoSeats(
+        $cargoSeats = $this->buildCargoSeats(
             $order
         );
 
