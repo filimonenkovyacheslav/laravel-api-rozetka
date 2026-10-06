@@ -44,7 +44,7 @@ class OrderTtnService
      */
     public function createForOrder(Order $order)
     {
-        if (!$this->isRozetkaApiOrder($order)) {
+        if (!$this->usesRozetkaApi($order)) {
             return $this->novaPoshtaService
                 ->createForOrder($order);
         }
@@ -118,10 +118,13 @@ class OrderTtnService
     }
 
     /**
+     * Определить, относится ли заказ
+     * к новому Rozetka Supplier API.
+     *
      * @param Order $order
      * @return bool
      */
-    private function isRozetkaApiOrder(
+    public function usesRozetkaApi(
         Order $order
     ) {
         return trim(
