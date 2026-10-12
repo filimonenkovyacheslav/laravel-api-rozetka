@@ -24,7 +24,72 @@ class Kernel extends ConsoleKernel
      */
     protected function schedule(Schedule $schedule)
     {
-        // $schedule->command('inspire')->hourly();
+        /*
+         * Основная синхронизация.
+         *
+         * API фильтрует по createdAt, поэтому каждый раз
+         * перечитываем скользящее окно, а не только записи
+         * после предыдущего запуска.
+         */
+        $schedule->command(
+            'rozetka:sync-orders',
+            [
+                '--from' => now()
+                    ->subDays(
+                        (int) config(
+                            'services.rozetka.sync_lookback_days',
+                            30
+                        )
+                    )
+                    ->startOfDay()
+                    ->format('Y-m-d H:i:s'),
+
+                '--to' => now()
+                    ->endOfDay()
+                    ->format('Y-m-d H:i:s'),
+            ]
+        )
+            ->everyTenMinutes()
+            ->withoutOverlapping(30)
+            ->when(function () {
+                return (bool) config(
+                    'services.rozetka.sync_enabled',
+                    false
+                );
+            });
+
+        /*
+         * Более глубокая контрольная сверка.
+         *
+         * Нужна для заказов, созданных давно,
+         * но изменившихся позднее.
+         */
+        $schedule->command(
+            'rozetka:sync-orders',
+            [
+                '--from' => now()
+                    ->subDays(
+                        (int) config(
+                            'services.rozetka.sync_reconcile_days',
+                            120
+                        )
+                    )
+                    ->startOfDay()
+                    ->format('Y-m-d H:i:s'),
+
+                '--to' => now()
+                    ->endOfDay()
+                    ->format('Y-m-d H:i:s'),
+            ]
+        )
+            ->dailyAt('03:15')
+            ->withoutOverlapping(120)
+            ->when(function () {
+                return (bool) config(
+                    'services.rozetka.sync_enabled',
+                    false
+                );
+            });
     }
 
     /**

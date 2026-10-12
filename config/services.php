@@ -57,6 +57,16 @@ return [
             FILTER_VALIDATE_BOOLEAN
         ),
 
+        'sync_lookback_days' => (int) env(
+            'ROZETKA_SYNC_LOOKBACK_DAYS',
+            30
+        ),
+
+        'sync_reconcile_days' => (int) env(
+            'ROZETKA_SYNC_RECONCILE_DAYS',
+            120
+        ),
+
         'actions_enabled' => filter_var(
             env('ROZETKA_ACTIONS_ENABLED', false),
             FILTER_VALIDATE_BOOLEAN
