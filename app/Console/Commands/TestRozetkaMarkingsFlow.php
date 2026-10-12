@@ -80,6 +80,22 @@ class TestRozetkaMarkingsFlow extends Command
             $this->newLine();
 
             $this->info(
+                'Тест 4: HTTP 200, але частина маркувань пропущена'
+            );
+
+            $this->testPartialMarkings();
+
+            $this->newLine();
+
+            $this->info(
+                'Тест 5: більше 100 маркувань'
+            );
+
+            $this->testMoreThan100Orders();
+
+            $this->newLine();
+
+            $this->info(
                 'Усі fake HTTP-тести маркувань успішно пройдено.'
             );
 
@@ -549,6 +565,253 @@ class TestRozetkaMarkingsFlow extends Command
 
         $this->line(
             'OK: HTTP 400 оброблено без Undefined variable.'
+        );
+    }
+
+    /**
+     * HTTP 200 может содержать неполный набор маркировок.
+     *
+     * Такой PDF нельзя молча отдавать пользователю.
+     *
+     * @return void
+     */
+    private function testPartialMarkings()
+    {
+        config([
+            'services.rozetka.actions_enabled' =>
+                true,
+        ]);
+
+        $batch =
+            $this->createBatch();
+
+        $order1 =
+            $this->createOrder(
+                true,
+                'shipping',
+                '20400000000105'
+            );
+
+        $order2 =
+            $this->createOrder(
+                true,
+                'shipping',
+                '20400000000106'
+            );
+
+        $this->createEntry(
+            $batch,
+            $order1,
+            'success',
+            '20400000000105'
+        );
+
+        $this->createEntry(
+            $batch,
+            $order2,
+            'success',
+            '20400000000106'
+        );
+
+        $this->resetHttp();
+
+        Http::fake(function (
+            HttpRequest $request
+        ) use (
+            $order1,
+            $order2
+        ) {
+            $path = (string) parse_url(
+                $request->url(),
+                PHP_URL_PATH
+            );
+
+            if (
+                $request->method() !== 'POST' ||
+                $path !==
+                    '/dropshipping/orders/print-markings'
+            ) {
+                throw new RuntimeException(
+                    'Несподіваний HTTP-запит: ' .
+                    $request->method() .
+                    ' ' .
+                    $path
+                );
+            }
+
+            $data =
+                $request->data();
+
+            $this->assertSame(
+                [
+                    $order1->guid,
+                    $order2->guid,
+                ],
+                $data['orders']
+                    ?? [],
+                'partial orders payload'
+            );
+
+            /*
+             * Один заказ напечатан,
+             * второй Rozetka пропустила.
+             */
+            return Http::response(
+                "%PDF-1.4\nPARTIAL MARKINGS\n",
+                200,
+                [
+                    'Content-Type' =>
+                        'application/pdf',
+
+                    'Content-Disposition' =>
+                        'attachment; filename="markings-1-85x85.pdf"',
+
+                    'X-Markings-Printed' =>
+                        '1',
+
+                    'X-Markings-Skipped' =>
+                        '1',
+                ]
+            );
+        });
+
+        $service =
+            app(RozetkaMarkingService::class);
+
+        $caught = null;
+
+        try {
+            $service->printBatchPdf(
+                $batch
+            );
+        } catch (RuntimeException $e) {
+            $caught = $e;
+        }
+
+        $this->assertTrue(
+            $caught instanceof RuntimeException,
+            'Неповний PDF не було заблоковано.'
+        );
+
+        $this->assertTrue(
+            strpos(
+                $caught->getMessage(),
+                'неповний комплект маркувань'
+            ) !== false,
+            'Немає зрозумілого повідомлення про неповний комплект.'
+        );
+
+        $this->assertTrue(
+            strpos(
+                $caught->getMessage(),
+                'пропущено: 1'
+            ) !== false,
+            'У повідомленні відсутня кількість пропущених.'
+        );
+
+        $this->line(
+            'OK: неповний PDF заблоковано, skipped=1.'
+        );
+    }
+
+    /**
+     * Rozetka принимает максимум 100 identifiers.
+     *
+     * Пакет из 101 подходящего заказа должен
+     * блокироваться до выполнения HTTP-запроса.
+     *
+     * @return void
+     */
+    private function testMoreThan100Orders()
+    {
+        config([
+            'services.rozetka.actions_enabled' =>
+                true,
+        ]);
+
+        $batch =
+            $this->createBatch();
+
+        for ($i = 1; $i <= 101; $i++) {
+            $trackingNumber =
+                '20400001' .
+                str_pad(
+                    (string) $i,
+                    6,
+                    '0',
+                    STR_PAD_LEFT
+                );
+
+            $order =
+                $this->createOrder(
+                    true,
+                    'shipping',
+                    $trackingNumber
+                );
+
+            $this->createEntry(
+                $batch,
+                $order,
+                'success',
+                $trackingNumber
+            );
+        }
+
+        $calls = [];
+
+        $this->resetHttp();
+
+        Http::fake(function (
+            HttpRequest $request
+        ) use (&$calls) {
+            $calls[] = [
+                'method' =>
+                    $request->method(),
+
+                'url' =>
+                    $request->url(),
+            ];
+
+            throw new RuntimeException(
+                'HTTP не повинен виконуватись ' .
+                'для пакета більше 100 замовлень.'
+            );
+        });
+
+        $service =
+            app(RozetkaMarkingService::class);
+
+        $caught = null;
+
+        try {
+            $service->printBatchPdf(
+                $batch
+            );
+        } catch (RuntimeException $e) {
+            $caught = $e;
+        }
+
+        $this->assertTrue(
+            $caught instanceof RuntimeException,
+            'Пакет із 101 замовлення не було заблоковано.'
+        );
+
+        $this->assertTrue(
+            strpos(
+                $caught->getMessage(),
+                'максимум 100'
+            ) !== false,
+            'Немає зрозумілого повідомлення про ліміт 100.'
+        );
+
+        $this->assertSame(
+            0,
+            count($calls),
+            'HTTP calls для 101 замовлення'
+        );
+
+        $this->line(
+            'OK: 101 замовлення заблоковано до HTTP-запиту.'
         );
     }
 

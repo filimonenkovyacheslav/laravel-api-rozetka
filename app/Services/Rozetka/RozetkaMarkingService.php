@@ -162,6 +162,39 @@ class RozetkaMarkingService
             );
         }
 
+        $printed = (int) (
+            $result['printed']
+            ?? 0
+        );
+
+        $skipped = (int) (
+            $result['skipped']
+            ?? 0
+        );
+
+        /*
+         * HTTP 200 ещё не означает, что напечатаны
+         * все переданные заказы.
+         *
+         * X-Markings-Skipped сообщает количество
+         * идентификаторов, которые Rozetka не включила
+         * в файл маркировок.
+         *
+         * Неполный PDF молча пользователю не отдаём.
+         */
+        if ($skipped > 0) {
+            throw new RuntimeException(
+                'Rozetka сформувала неповний комплект маркувань. ' .
+                'Передано замовлень: ' .
+                $orderIds->count() .
+                ', передано ТТН на друк: ' .
+                $printed .
+                ', пропущено: ' .
+                $skipped .
+                '. Перевірте замовлення та ТТН перед повторним друком.'
+            );
+        }
+
         return [
             'body' =>
                 $result['body'],
@@ -175,16 +208,10 @@ class RozetkaMarkingService
                 ?? null,
 
             'printed' =>
-                (int) (
-                    $result['printed']
-                    ?? 0
-                ),
+                $printed,
 
             'skipped' =>
-                (int) (
-                    $result['skipped']
-                    ?? 0
-                ),
+                $skipped,
 
             'requested' =>
                 $orderIds->count(),
