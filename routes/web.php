@@ -99,11 +99,6 @@ Route::middleware(['web', 'admin.basic'])->prefix('admin')->name('admin.')->grou
     )->name('ttn-batches.retry-failed');
 
     Route::post(
-        '/ttn-batches/{batch}/process-next',
-        [TtnBatchController::class, 'processNext']
-    )->name('ttn-batches.process-next');
-
-    Route::post(
         '/orders/{order}/ttn/delete',
         [OrderAdminController::class, 'deleteTtn']
     )->name('orders.ttn.delete');
@@ -112,11 +107,6 @@ Route::middleware(['web', 'admin.basic'])->prefix('admin')->name('admin.')->grou
         '/ttn-batches/{batch}/delete-next',
         [TtnBatchController::class, 'deleteNext']
     )->name('ttn-batches.delete-next');
-
-    Route::post(
-        '/ttn-batches/{batch}/retry-failed',
-        [TtnBatchController::class, 'retryFailed']
-    )->name('ttn-batches.retry-failed');
 
     Route::get(
         '/ttn-batches/{batch}/entries/{entry}/address',

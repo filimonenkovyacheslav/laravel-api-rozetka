@@ -155,6 +155,8 @@ class RozetkaClient
      */
     public function printMarkings(array $payload)
     {
+        $this->ensureActionsEnabled();
+
         return $this->requestFile(
             'POST',
             '/dropshipping/orders/print-markings',
@@ -227,6 +229,12 @@ class RozetkaClient
         $result = $response->json();
 
         if (!$response->successful()) {
+            $result = $response->json();
+
+            if (!is_array($result)) {
+                $result = null;
+            }
+
             throw new RozetkaApiException(
                 $this->buildErrorMessage(
                     $response->status(),
@@ -303,6 +311,12 @@ class RozetkaClient
         }
 
         if (!$response->successful()) {
+            $result = $response->json();
+
+            if (!is_array($result)) {
+                $result = null;
+            }
+
             throw new RozetkaApiException(
                 $this->buildErrorMessage(
                     $response->status(),
