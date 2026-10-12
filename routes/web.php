@@ -89,6 +89,11 @@ Route::middleware(['web', 'admin.basic'])->prefix('admin')->name('admin.')->grou
     )->name('ttn-batches.show');
 
     Route::post(
+        '/ttn-batches/{batch}/rozetka-markings',
+        [TtnBatchController::class, 'printRozetkaMarkings']
+    )->name('ttn-batches.rozetka-markings');
+
+    Route::post(
         '/ttn-batches/{batch}/process-next',
         [TtnBatchController::class, 'processNext']
     )->name('ttn-batches.process-next');

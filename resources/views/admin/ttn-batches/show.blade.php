@@ -141,6 +141,89 @@
 
         <div class="card mb-4">
             <div class="card-header">
+                Маркування Rozetka / Нова Пошта
+            </div>
+
+            <div class="card-body">
+                <form
+                    method="post"
+                    action="{{ route(
+                        'admin.ttn-batches.rozetka-markings',
+                        $batch
+                    ) }}"
+                    class="row align-items-end"
+                >
+                    @csrf
+
+                    <div class="col-md-4 mb-2">
+                        <label for="rozetka-marking-size">
+                            Розмір маркування
+                        </label>
+
+                        <select
+                            name="size"
+                            id="rozetka-marking-size"
+                            class="form-control"
+                        >
+                            <option value="85x85">
+                                85 × 85 мм
+                            </option>
+
+                            <option value="100x100">
+                                100 × 100 мм
+                            </option>
+                        </select>
+                    </div>
+
+                    <div class="col-md-5 mb-2">
+                        <button
+                            type="submit"
+                            class="btn btn-outline-primary"
+                            @if(
+                                (int) $rozetkaMarkingsCount < 1 ||
+                                !config(
+                                    'services.rozetka.actions_enabled',
+                                    false
+                                )
+                            )
+                                disabled
+                            @endif
+                        >
+                            Завантажити PDF маркувань
+
+                            @if((int) $rozetkaMarkingsCount > 0)
+                                ({{ (int) $rozetkaMarkingsCount }})
+                            @endif
+                        </button>
+                    </div>
+                </form>
+
+                @if((int) $rozetkaMarkingsCount < 1)
+                    <div class="text-muted mt-2">
+                        У пакеті немає успішних замовлень
+                        нового Rozetka API з ТТН.
+                    </div>
+                @elseif(
+                    !config(
+                        'services.rozetka.actions_enabled',
+                        false
+                    )
+                )
+                    <div class="text-muted mt-2">
+                        Дії Rozetka API зараз вимкнені.
+                    </div>
+                @else
+                    <div class="text-muted mt-2">
+                        До PDF буде включено лише замовлення,
+                        створені через новий Rozetka Supplier API.
+                        Legacy-ТТН не включаються.
+                    </div>
+                @endif
+            </div>
+        </div>
+
+        <div class="card mb-4">
+            <div class="card-header">
                 Формування ТТН
             </div>
 
