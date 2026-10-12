@@ -68,6 +68,10 @@ class SyncRozetkaOrders extends Command
                         $result['updated'],
                     ],
                     [
+                        'Пропущено без змін',
+                        $result['skipped'],
+                    ],
+                    [
                         'Помилок',
                         $result['failed'],
                     ],
