@@ -51,7 +51,7 @@ class RozetkaOrderService
                 'ROZETKA_SYNC_ENABLED=true.'
             );
         }
-        
+
         $page = 1;
 
         $result = [
@@ -59,34 +59,46 @@ class RozetkaOrderService
             'processed' => 0,
             'created' => 0,
             'updated' => 0,
+            'skipped' => 0,
             'failed' => 0,
             'errors' => [],
         ];
 
         while (true) {
             $query = array_filter([
-                'dateFrom' => $filters['dateFrom'] ?? null,
-                'dateTo' => $filters['dateTo'] ?? null,
-                'status' => $filters['status'] ?? null,
-                'page' => $page,
+                'dateFrom' =>
+                    $filters['dateFrom'] ?? null,
+
+                'dateTo' =>
+                    $filters['dateTo'] ?? null,
+
+                'status' =>
+                    $filters['status'] ?? null,
+
+                'page' =>
+                    $page,
             ], function ($value) {
-                return $value !== null && $value !== '';
+                return $value !== null &&
+                    $value !== '';
             });
 
             $response = $this->client->getOrders(
                 $query
             );
 
-            $totalCount = isset($response['totalCount'])
-                ? (int) $response['totalCount']
-                : 0;
+            $totalCount =
+                isset($response['totalCount'])
+                    ? (int) $response['totalCount']
+                    : 0;
 
             if ($page === 1) {
-                $result['total'] = $totalCount;
+                $result['total'] =
+                    $totalCount;
             }
 
-            $orders = isset($response['orders'])
-                && is_array($response['orders'])
+            $orders =
+                isset($response['orders']) &&
+                is_array($response['orders'])
                     ? $response['orders']
                     : [];
 
@@ -94,28 +106,89 @@ class RozetkaOrderService
                 break;
             }
 
+            /*
+             * Получаем существующие локальные заказы
+             * одним запросом на всю страницу.
+             *
+             * API возвращает до 50 заказов на страницу,
+             * поэтому нет смысла выполнять отдельный
+             * SELECT по GUID для каждого summary.
+             */
+            $orderIds = collect($orders)
+                ->map(function ($summary) {
+                    return isset(
+                        $summary['orderId']
+                    )
+                        ? trim(
+                            (string) $summary['orderId']
+                        )
+                        : '';
+                })
+                ->filter()
+                ->unique()
+                ->values();
+
+            $existingOrders = Order::query()
+                ->whereIn(
+                    'guid',
+                    $orderIds->all()
+                )
+                ->get()
+                ->keyBy(function ($order) {
+                    return (string) $order->guid;
+                });
+
             foreach ($orders as $summary) {
-                $orderId = isset($summary['orderId'])
-                    ? trim((string) $summary['orderId'])
-                    : '';
+                $orderId =
+                    isset($summary['orderId'])
+                        ? trim(
+                            (string) $summary['orderId']
+                        )
+                        : '';
 
                 if ($orderId === '') {
                     $result['failed']++;
+
                     $result['errors'][] =
-                        'У списку Rozetka отримано замовлення без orderId.';
+                        'У списку Rozetka отримано ' .
+                        'замовлення без orderId.';
+
+                    continue;
+                }
+
+                $existingOrder =
+                    $existingOrders->get(
+                        $orderId
+                    );
+
+                /*
+                 * Если summary говорит, что локальный
+                 * заказ уже полностью синхронизирован
+                 * и с прошлого раза не изменился,
+                 * GET /orders/{orderId} не выполняем.
+                 */
+                if (
+                    !$this->shouldFetchDetails(
+                        $summary,
+                        $existingOrder
+                    )
+                ) {
+                    $result['skipped']++;
 
                     continue;
                 }
 
                 try {
-                    $details = $this->client->getOrder(
-                        $orderId
-                    );
+                    $details =
+                        $this->client->getOrder(
+                            $orderId
+                        );
 
-                    $syncResult = $this->saveOrder(
-                        $details,
-                        $dryRun
-                    );
+                    $syncResult =
+                        $this->saveOrder(
+                            $details,
+                            $dryRun
+                        );
 
                     $result['processed']++;
 
@@ -127,18 +200,20 @@ class RozetkaOrderService
                 } catch (Throwable $e) {
                     $result['failed']++;
 
-                    $result['errors'][] = sprintf(
-                        '%s: %s',
-                        $orderId,
-                        $e->getMessage()
-                    );
+                    $result['errors'][] =
+                        sprintf(
+                            '%s: %s',
+                            $orderId,
+                            $e->getMessage()
+                        );
 
                     report($e);
                 }
             }
 
             /*
-             * API возвращает по 50 заказов на страницу.
+             * API возвращает по 50 заказов
+             * на одну страницу.
              */
             if (
                 $totalCount === 0 ||
@@ -154,6 +229,117 @@ class RozetkaOrderService
     }
 
     /**
+     * Определить, нужен ли полный GET заказа.
+     *
+     * @param array $summary
+     * @param Order|null $existingOrder
+     * @return bool
+     */
+    private function shouldFetchDetails(
+        array $summary,
+        $existingOrder
+    ) {
+        /*
+         * Новый заказ.
+         */
+        if (!$existingOrder) {
+            return true;
+        }
+
+        /*
+         * Заказ существовал до нового API
+         * либо ещё ни разу не был полноценно
+         * синхронизирован через Supplier API.
+         */
+        if (!$existingOrder->rozetka_synced_at) {
+            return true;
+        }
+
+        $remoteStatus = trim(
+            (string) (
+                $summary['orderStatus']
+                ?? ''
+            )
+        );
+
+        /*
+         * При некорректном summary безопаснее
+         * запросить полную карточку.
+         */
+        if ($remoteStatus === '') {
+            return true;
+        }
+
+        $localStatus = trim(
+            (string) $existingOrder->rozetka_status
+        );
+
+        /*
+         * Статус изменился.
+         */
+        if ($remoteStatus !== $localStatus) {
+            return true;
+        }
+
+        /*
+         * updatedAt — основной признак изменения
+         * содержимого заказа.
+         *
+         * Если API вообще не прислал это поле,
+         * выполняем detail GET.
+         */
+        if (
+            !array_key_exists(
+                'updatedAt',
+                $summary
+            )
+        ) {
+            return true;
+        }
+
+        $remoteUpdatedAt =
+            $this->parseDate(
+                $summary['updatedAt']
+            );
+
+        $localUpdatedAt =
+            $existingOrder->updated_at_partner;
+
+        /*
+         * updatedAt у ещё не изменявшегося заказа
+         * может быть null.
+         */
+        if ($remoteUpdatedAt === null) {
+            return $localUpdatedAt !== null;
+        }
+
+        if ($localUpdatedAt === null) {
+            return true;
+        }
+
+        try {
+            $localUpdatedAt =
+                Carbon::parse(
+                    $localUpdatedAt
+                );
+        } catch (Throwable $e) {
+            /*
+             * Если локальная дата по какой-то причине
+             * повреждена, не рискуем пропустить изменения.
+             */
+            return true;
+        }
+
+        /*
+         * Полный запрос нужен только тогда,
+         * когда timestamps отличаются.
+         */
+        return !$remoteUpdatedAt->equalTo(
+            $localUpdatedAt
+        );
+    }
+
+    /**
      * Сохранить полный заказ Rozetka.
      *
      * @param array $data
@@ -164,154 +350,240 @@ class RozetkaOrderService
         array $data,
         $dryRun = false
     ) {
-        $orderId = isset($data['orderId'])
-            ? trim((string) $data['orderId'])
-            : '';
+        $orderId =
+            isset($data['orderId'])
+                ? trim(
+                    (string) $data['orderId']
+                )
+                : '';
 
         if ($orderId === '') {
             throw new RuntimeException(
-                'API Rozetka повернув замовлення без orderId.'
+                'API Rozetka повернув ' .
+                'замовлення без orderId.'
             );
         }
 
         $existingOrder = Order::query()
-            ->where('guid', $orderId)
+            ->where(
+                'guid',
+                $orderId
+            )
             ->first();
 
-        $isNew = !$existingOrder;
+        $isNew =
+            !$existingOrder;
 
+        /*
+         * Dry-run получает реальную detail-карточку,
+         * но ничего в БД не изменяет.
+         */
         if ($dryRun) {
             return [
-                'created' => $isNew,
-                'order_id' => $orderId,
+                'created' =>
+                    $isNew,
+
+                'order_id' =>
+                    $orderId,
             ];
         }
 
-        return DB::transaction(function () use (
-            $data,
-            $orderId,
-            $existingOrder,
-            $isNew
-        ) {
-            $order = $existingOrder ?: new Order();
-
-            $order->guid = $orderId;
-
-            $order->order_num =
-                $data['orderNum'] ?? null;
-
-            /*
-             * Для совместимости со старой админкой.
-             * Раньше номер РОЗ фактически хранился в comment.
-             */
-            if (
-                empty($order->comment) &&
-                !empty($data['orderNum'])
+        return DB::transaction(
+            function () use (
+                $data,
+                $orderId,
+                $existingOrder,
+                $isNew
             ) {
-                $order->comment =
-                    (string) $data['orderNum'];
-            }
+                $order =
+                    $existingOrder
+                        ?: new Order();
 
-            $order->rozetka_status =
-                $data['orderStatus'] ?? null;
+                $order->guid =
+                    $orderId;
 
-            $order->status = $this->mapInternalStatus(
-                $data['orderStatus'] ?? null,
-                $order->status
-            );
+                $order->order_num =
+                    $data['orderNum']
+                    ?? null;
 
-            $order->delivery_type =
-                $data['deliveryAddressType'] ?? null;
-
-            $order->cash_on_delivery =
-                $data['cashOnDelivery'] ?? null;
-
-            $order->delivery_company =
-                $data['deliveryCompanyName'] ?? null;
-
-            $order->delivery_address_id =
-                $data['deliveryAddressId'] ?? null;
-
-            $order->customer_name =
-                $data['customerName'] ?? null;
-
-            $order->delivery_city =
-                $data['deliveryCity'] ?? null;
-
-            $order->delivery_street =
-                $data['deliveryStreet'] ?? null;
-
-            $order->delivery_phone =
-                $data['deliveryPhone'] ?? null;
-
-            $order->tracking_number =
-                $data['ttn'] ?? null;
-
-            $order->tracking_status_code =
-                $data['trackingStatusCode'] ?? null;
-
-            $order->tracking_status =
-                $data['trackingStatus'] ?? null;
-
-            $order->return_ttn =
-                $data['returnTtn'] ?? null;
-
-            $order->document_link =
-                $data['documentLink'] ?? null;
-
-            $order->incoming_invoice_number =
-                $data['incomingInvoiceNumber'] ?? null;
-
-            $order->sn_required =
-                array_key_exists('snRequired', $data)
-                    ? (bool) $data['snRequired']
-                    : null;
-
-            $order->created_at_partner =
-                $this->parseDate(
-                    $data['createdAt'] ?? null
-                );
-
-            $order->updated_at_partner =
-                $this->parseDate(
-                    $data['updatedAt'] ?? null
-                );
-
-            $order->rozetka_synced_at = now();
-
-            /*
-             * Для новых заказов сохраняем реальную дату
-             * создания заказа Rozetka и в created_at.
-             *
-             * Тогда старые фильтры админки продолжат
-             * корректно работать.
-             */
-            if ($isNew && !empty($data['createdAt'])) {
-                $createdAt = $this->parseDate(
-                    $data['createdAt']
-                );
-
-                if ($createdAt) {
-                    $order->created_at = $createdAt;
+                /*
+                 * Совместимость со старой админкой.
+                 *
+                 * Раньше номер РОЗ фактически
+                 * хранился в comment.
+                 */
+                if (
+                    empty($order->comment) &&
+                    !empty($data['orderNum'])
+                ) {
+                    $order->comment =
+                        (string) $data['orderNum'];
                 }
+
+                $order->rozetka_status =
+                    $data['orderStatus']
+                    ?? null;
+
+                $order->status =
+                    $this->mapInternalStatus(
+                        $data['orderStatus']
+                        ?? null,
+
+                        $order->status
+                    );
+
+                $order->delivery_type =
+                    $data['deliveryAddressType']
+                    ?? null;
+
+                $order->cash_on_delivery =
+                    $data['cashOnDelivery']
+                    ?? null;
+
+                $order->delivery_company =
+                    $data['deliveryCompanyName']
+                    ?? null;
+
+                $order->delivery_address_id =
+                    $data['deliveryAddressId']
+                    ?? null;
+
+                $order->customer_name =
+                    $data['customerName']
+                    ?? null;
+
+                $order->delivery_city =
+                    $data['deliveryCity']
+                    ?? null;
+
+                $order->delivery_street =
+                    $data['deliveryStreet']
+                    ?? null;
+
+                $order->delivery_phone =
+                    $data['deliveryPhone']
+                    ?? null;
+
+                /*
+                 * Не очищаем существующую локальную
+                 * ТТН пустым значением из API.
+                 *
+                 * Это особенно важно для legacy-заказов,
+                 * которые могут попасть в широкое окно
+                 * контрольной синхронизации.
+                 */
+                $remoteTtn = trim(
+                    (string) (
+                        $data['ttn']
+                        ?? ''
+                    )
+                );
+
+                if ($remoteTtn !== '') {
+                    $order->tracking_number =
+                        $remoteTtn;
+                } elseif (
+                    trim(
+                        (string)
+                        $order->tracking_number
+                    ) === ''
+                ) {
+                    $order->tracking_number =
+                        null;
+                }
+
+                $order->tracking_status_code =
+                    $data['trackingStatusCode']
+                    ?? null;
+
+                $order->tracking_status =
+                    $data['trackingStatus']
+                    ?? null;
+
+                $order->return_ttn =
+                    $data['returnTtn']
+                    ?? null;
+
+                $order->document_link =
+                    $data['documentLink']
+                    ?? null;
+
+                $order->incoming_invoice_number =
+                    $data['incomingInvoiceNumber']
+                    ?? null;
+
+                $order->sn_required =
+                    array_key_exists(
+                        'snRequired',
+                        $data
+                    )
+                        ? (bool)
+                            $data['snRequired']
+                        : null;
+
+                $order->created_at_partner =
+                    $this->parseDate(
+                        $data['createdAt']
+                        ?? null
+                    );
+
+                $order->updated_at_partner =
+                    $this->parseDate(
+                        $data['updatedAt']
+                        ?? null
+                    );
+
+                $order->rozetka_synced_at =
+                    now();
+
+                /*
+                 * Для нового заказа сохраняем
+                 * реальную дату создания Rozetka
+                 * также в стандартный created_at.
+                 *
+                 * Благодаря этому существующие
+                 * фильтры админки продолжают работать.
+                 */
+                if (
+                    $isNew &&
+                    !empty($data['createdAt'])
+                ) {
+                    $createdAt =
+                        $this->parseDate(
+                            $data['createdAt']
+                        );
+
+                    if ($createdAt) {
+                        $order->created_at =
+                            $createdAt;
+                    }
+                }
+
+                $order->save();
+
+                $products =
+                    isset($data['products']) &&
+                    is_array($data['products'])
+                        ? $data['products']
+                        : [];
+
+                $this->syncItems(
+                    $order,
+                    $products
+                );
+
+                return [
+                    'created' =>
+                        $isNew,
+
+                    'order_id' =>
+                        $order->guid,
+
+                    'id' =>
+                        $order->id,
+                ];
             }
-
-            $order->save();
-
-            $this->syncItems(
-                $order,
-                isset($data['products'])
-                && is_array($data['products'])
-                    ? $data['products']
-                    : []
-            );
-
-            return [
-                'created' => $isNew,
-                'order_id' => $order->guid,
-                'id' => $order->id,
-            ];
-        });
+        );
     }
 
     /**
@@ -328,13 +600,15 @@ class RozetkaOrderService
         $savedItemIds = [];
 
         foreach ($products as $product) {
-            $supplierCode = isset(
-                $product['supplierCode']
-            )
-                ? trim(
-                    (string) $product['supplierCode']
+            $supplierCode =
+                isset(
+                    $product['supplierCode']
                 )
-                : '';
+                    ? trim(
+                        (string)
+                        $product['supplierCode']
+                    )
+                    : '';
 
             if ($supplierCode === '') {
                 throw new RuntimeException(
@@ -355,26 +629,57 @@ class RozetkaOrderService
                 )
                 ->first();
 
-            $isNewItem = !$item;
+            $isNewItem =
+                !$item;
 
             if (!$item) {
-                $item = new OrderItem();
-                $item->order_id = $order->id;
+                $item =
+                    new OrderItem();
+
+                $item->order_id =
+                    $order->id;
+
                 $item->supplier_code =
                     $supplierCode;
+
+                /*
+                 * В новом Dropshipping API
+                 * цена позиции отсутствует.
+                 */
+                $item->price =
+                    null;
             }
 
+            /*
+             * supplierCode сохраняем без нормализации.
+             *
+             * Это значение должно совпадать
+             * с артикулом поставщика в Rozetka.
+             */
+            $item->supplier_code =
+                $supplierCode;
+
             $item->rz_code =
-                array_key_exists('rzCode', $product)
-                && $product['rzCode'] !== null
-                    ? (string) $product['rzCode']
+                isset($product['rzCode'])
+                    ? trim(
+                        (string)
+                        $product['rzCode']
+                    )
                     : null;
 
-            $item->quantity =
+            $quantity =
                 isset($product['quantity'])
-                    ? (int) $product['quantity']
+                    ? (int)
+                        $product['quantity']
                     : 0;
 
+            $item->quantity =
+                $quantity;
+
+            /*
+             * confirmedQuantity может быть null
+             * до подтверждения заказа.
+             */
             if (
                 array_key_exists(
                     'confirmedQuantity',
@@ -382,72 +687,98 @@ class RozetkaOrderService
                 )
             ) {
                 $item->confirmed_quantity =
-                    $product['confirmedQuantity'] !== null
-                        ? (int) $product['confirmedQuantity']
+                    $product[
+                        'confirmedQuantity'
+                    ] !== null
+                        ? (int)
+                            $product[
+                                'confirmedQuantity'
+                            ]
                         : null;
+
+                /*
+                 * Для совместимости со старым UI:
+                 * если Rozetka уже вернула
+                 * confirmedQuantity, показываем
+                 * её также как reserved_quantity.
+                 */
+                if (
+                    $product[
+                        'confirmedQuantity'
+                    ] !== null
+                ) {
+                    $item->reserved_quantity =
+                        (int)
+                            $product[
+                                'confirmedQuantity'
+                            ];
+                } elseif ($isNewItem) {
+                    /*
+                     * Для нового неподтверждённого
+                     * заказа по умолчанию считаем,
+                     * что менеджер планирует
+                     * подтвердить всё количество.
+                     */
+                    $item->reserved_quantity =
+                        $quantity;
+                }
+            } elseif ($isNewItem) {
+                $item->confirmed_quantity =
+                    null;
+
+                $item->reserved_quantity =
+                    $quantity;
             }
 
             /*
-             * reserved_quantity пока оставляем для
-             * совместимости со старой админкой.
-             *
-             * Новый заказ по умолчанию считаем полностью
-             * зарезервированным.
-             *
-             * Если Rozetka уже вернула confirmedQuantity,
-             * отражаем это также в старом поле.
+             * Серийные номера синхронизируем,
+             * если API действительно вернул поле.
              */
             if (
                 array_key_exists(
-                    'confirmedQuantity',
+                    'serialNumbers',
                     $product
-                ) &&
-                $product['confirmedQuantity'] !== null
+                )
             ) {
-                $item->reserved_quantity =
-                    (int) $product['confirmedQuantity'];
-            } elseif (
-                $isNewItem &&
-                $item->reserved_quantity === null
-            ) {
-                $item->reserved_quantity =
-                    (int) $item->quantity;
+                $serialNumbers =
+                    is_array(
+                        $product['serialNumbers']
+                    )
+                        ? array_values(
+                            $product[
+                                'serialNumbers'
+                            ]
+                        )
+                        : [];
+
+                $item->serial_number =
+                    empty($serialNumbers)
+                        ? null
+                        : json_encode(
+                            $serialNumbers,
+                            JSON_UNESCAPED_UNICODE
+                        );
             }
-
-            /*
-             * Новый API цену заказа не возвращает.
-             *
-             * Для существующей позиции старую цену
-             * не трогаем.
-             *
-             * Для новой она останется NULL.
-             */
-            if ($isNewItem) {
-                $item->price = null;
-            }
-
-            $serialNumbers =
-                isset($product['serialNumbers'])
-                && is_array($product['serialNumbers'])
-                    ? $product['serialNumbers']
-                    : [];
-
-            $item->serial_number = json_encode(
-                array_values($serialNumbers),
-                JSON_UNESCAPED_UNICODE
-            );
 
             $item->save();
 
-            $savedItemIds[] = $item->id;
+            $savedItemIds[] =
+                $item->id;
         }
 
         /*
-         * Если Rozetka удалила позицию из заказа,
-         * локально она тоже больше не должна оставаться.
+         * Full-detail API возвращает полный
+         * состав заказа.
+         *
+         * Позиции, которых больше нет
+         * в ответе Rozetka, удаляем локально.
          */
-        $deleteQuery = OrderItem::query()
-            ->where('order_id', $order->id);
+        $deleteQuery =
+            OrderItem::query()
+                ->where(
+                    'order_id',
+                    $order->id
+                );
 
         if (!empty($savedItemIds)) {
             $deleteQuery->whereNotIn(
@@ -460,9 +791,9 @@ class RozetkaOrderService
     }
 
     /**
-     * Оставляем старый status для действующей админки.
-     * Отдельный rozetka_status является источником
-     * состояния нового API.
+     * Сопоставить новый статус Rozetka
+     * со старым внутренним статусом,
+     * который использует существующая админка.
      *
      * @param string|null $rozetkaStatus
      * @param string|null $currentStatus
@@ -486,7 +817,11 @@ class RozetkaOrderService
                 return 'created';
 
             case 'shipping':
+                return 'shipped';
+
             case 'closed':
+                return 'shipped';
+
             case 'delivery_refused':
                 return 'shipped';
 
@@ -494,24 +829,39 @@ class RozetkaOrderService
                 return 'updated';
 
             default:
-                return $currentStatus ?: 'created';
+                return $currentStatus
+                    ?: 'created';
         }
     }
 
     /**
+     * Разобрать дату Rozetka.
+     *
      * @param mixed $value
      * @return Carbon|null
      */
     private function parseDate($value)
     {
-        if ($value === null || $value === '') {
+        if (
+            $value === null ||
+            trim((string) $value) === ''
+        ) {
             return null;
         }
 
         try {
-            return Carbon::parse($value);
+            return Carbon::parse(
+                (string) $value
+            );
         } catch (Throwable $e) {
-            return null;
+            throw new RuntimeException(
+                'API Rozetka повернув ' .
+                'некоректну дату "' .
+                (string) $value .
+                '".',
+                0,
+                $e
+            );
         }
     }
 }
