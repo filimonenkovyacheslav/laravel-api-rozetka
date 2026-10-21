@@ -796,6 +796,20 @@ class RozetkaOrderService
                         );
             }
 
+            if (
+                array_key_exists(
+                    'cargoSeats',
+                    $product
+                )
+            ) {
+                $item->rozetka_cargo_seats =
+                    is_array($product['cargoSeats'])
+                        ? array_values(
+                            $product['cargoSeats']
+                        )
+                        : [];
+            }
+
             $item->save();
 
             $savedItemIds[] =

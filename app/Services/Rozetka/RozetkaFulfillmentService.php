@@ -11,6 +11,21 @@ use RuntimeException;
 class RozetkaFulfillmentService
 {
     /**
+     * @var RozetkaClient
+     */
+    private $client;
+
+    /**
+     * @var array
+     */
+    private $dimensionCache = [];
+
+    public function __construct(RozetkaClient $client)
+    {
+        $this->client = $client;
+    }
+
+    /**
      * Обновить локальное состояние заказа
      * актуальными данными из Rozetka.
      *
@@ -181,7 +196,6 @@ class RozetkaFulfillmentService
                         $product['confirmedQuantity'] !== null
                             ? (int) $product['confirmedQuantity']
                             : null;
-
                 }
 
                 if (
@@ -199,6 +213,32 @@ class RozetkaFulfillmentService
                         );
                 }
 
+                /*
+                 * Сохраняем исходные cargoSeats,
+                 * которые вернула Rozetka.
+                 *
+                 * Они используются только для проверки
+                 * перед созданием ТТН.
+                 *
+                 * Источником payload для ТТН по-прежнему
+                 * остаются наши ProductDimension.
+                 */
+                if (
+                    array_key_exists(
+                        'cargoSeats',
+                        $product
+                    )
+                ) {
+                    $item->rozetka_cargo_seats =
+                        is_array(
+                            $product['cargoSeats']
+                        )
+                            ? array_values(
+                                $product['cargoSeats']
+                            )
+                            : [];
+                }
+
                 $item->save();
             }
         });
@@ -206,21 +246,6 @@ class RozetkaFulfillmentService
         return $order->fresh([
             'items',
         ]);
-    }
-    
-    /**
-     * @var RozetkaClient
-     */
-    private $client;
-
-    /**
-     * @var array
-     */
-    private $dimensionCache = [];
-
-    public function __construct(RozetkaClient $client)
-    {
-        $this->client = $client;
     }
 
     /**
@@ -288,9 +313,10 @@ class RozetkaFulfillmentService
                 );
             }
 
-            $serialNumbers = $this->decodeSerialNumbers(
-                $item->serial_number
-            );
+            $serialNumbers =
+                $this->decodeSerialNumbers(
+                    $item->serial_number
+                );
 
             /*
              * Если заказ требует SN, количество серийников
@@ -298,7 +324,8 @@ class RozetkaFulfillmentService
              */
             if (
                 $order->sn_required &&
-                count($serialNumbers) !== $confirmedQuantity
+                count($serialNumbers) !==
+                    $confirmedQuantity
             ) {
                 throw new RuntimeException(
                     'Для товару ' .
@@ -317,7 +344,8 @@ class RozetkaFulfillmentService
              */
             if (
                 !empty($serialNumbers) &&
-                count($serialNumbers) !== $confirmedQuantity
+                count($serialNumbers) !==
+                    $confirmedQuantity
             ) {
                 throw new RuntimeException(
                     'Кількість серійних номерів товару ' .
@@ -327,14 +355,20 @@ class RozetkaFulfillmentService
             }
 
             $products[] = [
-                'supplierCode' => $supplierCode,
-                'confirmedQuantity' => $confirmedQuantity,
-                'serialNumbers' => $serialNumbers,
+                'supplierCode' =>
+                    $supplierCode,
+
+                'confirmedQuantity' =>
+                    $confirmedQuantity,
+
+                'serialNumbers' =>
+                    $serialNumbers,
             ];
         }
 
         return [
-            'products' => $products,
+            'products' =>
+                $products,
         ];
     }
 
@@ -348,27 +382,39 @@ class RozetkaFulfillmentService
     {
         $this->ensureActionsEnabled();
 
-        $orderId = $this->getOrderId($order);
+        $orderId =
+            $this->getOrderId(
+                $order
+            );
 
-        $payload = $this->buildConfirmPayload(
-            $order
-        );
+        $payload =
+            $this->buildConfirmPayload(
+                $order
+            );
 
-        $response = $this->client->confirmOrder(
-            $orderId,
-            $payload['products']
-        );
+        $response =
+            $this->client->confirmOrder(
+                $orderId,
+                $payload['products']
+            );
 
         DB::transaction(function () use (
             $order,
             $response
         ) {
-            if (!empty($response['orderStatus'])) {
+            if (
+                !empty(
+                    $response['orderStatus']
+                )
+            ) {
                 $order->rozetka_status =
-                    (string) $response['orderStatus'];
+                    (string)
+                    $response['orderStatus'];
             }
 
-            $order->rozetka_synced_at = now();
+            $order->rozetka_synced_at =
+                now();
+
             $order->save();
 
             $products =
@@ -412,7 +458,8 @@ class RozetkaFulfillmentService
                 ) {
                     $item->confirmed_quantity =
                         $product['confirmedQuantity'] !== null
-                            ? (int) $product['confirmedQuantity']
+                            ? (int)
+                                $product['confirmedQuantity']
                             : null;
 
                     $item->reserved_quantity =
@@ -425,14 +472,22 @@ class RozetkaFulfillmentService
                         $product['serialNumbers']
                     )
                 ) {
-                    $item->serial_number = json_encode(
-                        array_values(
-                            $product['serialNumbers']
-                        ),
-                        JSON_UNESCAPED_UNICODE
-                    );
+                    $item->serial_number =
+                        json_encode(
+                            array_values(
+                                $product['serialNumbers']
+                            ),
+                            JSON_UNESCAPED_UNICODE
+                        );
                 }
 
+                /*
+                 * Ответ confirm не обязан содержать
+                 * cargoSeats.
+                 *
+                 * Сохранённые ранее данные Rozetka
+                 * здесь намеренно не трогаем.
+                 */
                 $item->save();
             }
         });
@@ -494,7 +549,8 @@ class RozetkaFulfillmentService
         $cargoSeats = [];
 
         foreach ($order->items as $item) {
-            $quantity = (int) $item->quantity;
+            $quantity =
+                (int) $item->quantity;
 
             if ($quantity < 1) {
                 throw new RuntimeException(
@@ -513,7 +569,8 @@ class RozetkaFulfillmentService
             if ($requireConfirmation) {
                 if (
                     $item->confirmed_quantity === null ||
-                    (int) $item->confirmed_quantity !== $quantity
+                    (int) $item->confirmed_quantity !==
+                        $quantity
                 ) {
                     throw new RuntimeException(
                         'Товар ' .
@@ -532,44 +589,32 @@ class RozetkaFulfillmentService
                 }
             }
 
-            $dimension = $this->findDimension(
-                $item->rz_code
-            );
-
-            $dimension->loadMissing('places');
-
-            $places = $dimension->places;
-
             /*
-             * Если отдельные места отсутствуют,
-             * используем общие размеры товара как одно место.
+             * Локальные места одной единицы товара.
              */
-            if ($places->isEmpty()) {
-                $places = collect([
-                    (object) [
-                        'weight' => $dimension->weight,
-                        'length' => $dimension->length,
-                        'width' => $dimension->width,
-                        'height' => $dimension->height,
-                    ],
-                ]);
-            }
+            $unitCargoSeats =
+                $this->buildLocalCargoSeatsForItem(
+                    $item
+                );
 
             /*
-             * quantity = количество единиц товара.
-             * Для каждой единицы повторяем её набор мест.
+             * cargoSeats в Rozetka относятся
+             * к одной единице товара.
+             *
+             * Для quantity > 1 повторяем весь
+             * набор мест каждой единицы.
              */
             for (
                 $unit = 1;
                 $unit <= $quantity;
                 $unit++
             ) {
-                foreach ($places as $place) {
+                foreach (
+                    $unitCargoSeats
+                    as $seat
+                ) {
                     $cargoSeats[] =
-                        $this->makeCargoSeat(
-                            $place,
-                            $item->rz_code
-                        );
+                        $seat;
                 }
             }
         }
@@ -581,6 +626,296 @@ class RozetkaFulfillmentService
         }
 
         return $cargoSeats;
+    }
+
+    /**
+     * Получить локальные грузовые места
+     * для ОДНОЙ единицы товара.
+     *
+     * @param OrderItem $item
+     * @return array
+     */
+    private function buildLocalCargoSeatsForItem(
+        OrderItem $item
+    ) {
+        $dimension =
+            $this->findDimension(
+                $item->rz_code
+            );
+
+        $dimension->loadMissing(
+            'places'
+        );
+
+        $places =
+            $dimension->places;
+
+        /*
+         * Если отдельные места отсутствуют,
+         * используем общие размеры товара
+         * как одно место.
+         */
+        if ($places->isEmpty()) {
+            $places = collect([
+                (object) [
+                    'weight' =>
+                        $dimension->weight,
+
+                    'length' =>
+                        $dimension->length,
+
+                    'width' =>
+                        $dimension->width,
+
+                    'height' =>
+                        $dimension->height,
+                ],
+            ]);
+        }
+
+        $result = [];
+
+        foreach ($places as $place) {
+            $result[] =
+                $this->makeCargoSeat(
+                    $place,
+                    $item->rz_code
+                );
+        }
+
+        return $result;
+    }
+
+    /**
+     * Проверить, что локальные cargoSeats
+     * не конфликтуют с cargoSeats,
+     * которые вернула Rozetka.
+     *
+     * Пустой массив Rozetka не блокирует TTN:
+     * в таком случае используем локальные размеры.
+     *
+     * @param Order $order
+     * @return void
+     */
+    public function validateCargoSeatsAgainstRozetka(
+        Order $order
+    ) {
+        $order->loadMissing('items');
+
+        foreach ($order->items as $item) {
+            $remoteSeats =
+                $item->rozetka_cargo_seats;
+
+            /*
+             * Rozetka может не иметь информации
+             * о грузовых местах.
+             *
+             * В этом случае продолжаем использовать
+             * наши ProductDimension.
+             */
+            if (
+                !is_array($remoteSeats) ||
+                empty($remoteSeats)
+            ) {
+                continue;
+            }
+
+            $localSeats =
+                $this->buildLocalCargoSeatsForItem(
+                    $item
+                );
+
+            $normalizedRemote =
+                $this->normalizeCargoSeatsForComparison(
+                    $remoteSeats,
+                    $item->rz_code,
+                    'Rozetka'
+                );
+
+            $normalizedLocal =
+                $this->normalizeCargoSeatsForComparison(
+                    $localSeats,
+                    $item->rz_code,
+                    'локально'
+                );
+
+            if (
+                $normalizedRemote !==
+                $normalizedLocal
+            ) {
+                throw new RuntimeException(
+                    'Неможливо автоматично створити ТТН. ' .
+                    'Для товару ' .
+                    $item->rz_code .
+                    ' вантажні місця відрізняються. ' .
+                    'Rozetka: ' .
+                    count($remoteSeats) .
+                    ', локально: ' .
+                    count($localSeats) .
+                    '. Перевірте кількість місць, ' .
+                    'габарити та вагу товару.'
+                );
+            }
+        }
+    }
+
+    /**
+     * Нормализовать места перед сравнением.
+     *
+     * Поворот коробки не считаем отличием:
+     * 90x200x6 эквивалентно 6x90x200.
+     *
+     * Порядок мест также не имеет значения.
+     *
+     * @param array $seats
+     * @param mixed $rzCode
+     * @param string $source
+     * @return array
+     */
+    private function normalizeCargoSeatsForComparison(
+        array $seats,
+        $rzCode,
+        $source
+    ) {
+        $normalized = [];
+
+        foreach ($seats as $seat) {
+            if (!is_array($seat)) {
+                throw new RuntimeException(
+                    'Для товару ' .
+                    $rzCode .
+                    ' джерело "' .
+                    $source .
+                    '" містить некоректний cargoSeat.'
+                );
+            }
+
+            $length =
+                (float) (
+                    $seat['lengthCm']
+                    ?? 0
+                );
+
+            $width =
+                (float) (
+                    $seat['widthCm']
+                    ?? 0
+                );
+
+            $height =
+                (float) (
+                    $seat['heightCm']
+                    ?? 0
+                );
+
+            $weight =
+                (float) (
+                    $seat['weightKg']
+                    ?? 0
+                );
+
+            if (
+                $length <= 0 ||
+                $width <= 0 ||
+                $height <= 0 ||
+                $weight <= 0
+            ) {
+                throw new RuntimeException(
+                    'Для товару ' .
+                    $rzCode .
+                    ' джерело "' .
+                    $source .
+                    '" містить нульові або від’ємні ' .
+                    'габарити/вагу cargoSeat.'
+                );
+            }
+
+            /*
+             * Ориентация коробки не важна.
+             */
+            $dimensions = [
+                round(
+                    $length,
+                    1
+                ),
+
+                round(
+                    $width,
+                    1
+                ),
+
+                round(
+                    $height,
+                    1
+                ),
+            ];
+
+            sort(
+                $dimensions,
+                SORT_NUMERIC
+            );
+
+            $normalized[] = [
+                'dimensions' =>
+                    $dimensions,
+
+                'weightKg' =>
+                    round(
+                        $weight,
+                        2
+                    ),
+            ];
+        }
+
+        /*
+         * Порядок грузовых мест
+         * также не должен влиять на результат.
+         */
+        usort(
+            $normalized,
+            function (
+                $left,
+                $right
+            ) {
+                for (
+                    $i = 0;
+                    $i < 3;
+                    $i++
+                ) {
+                    if (
+                        $left['dimensions'][$i] <
+                        $right['dimensions'][$i]
+                    ) {
+                        return -1;
+                    }
+
+                    if (
+                        $left['dimensions'][$i] >
+                        $right['dimensions'][$i]
+                    ) {
+                        return 1;
+                    }
+                }
+
+                if (
+                    $left['weightKg'] <
+                    $right['weightKg']
+                ) {
+                    return -1;
+                }
+
+                if (
+                    $left['weightKg'] >
+                    $right['weightKg']
+                ) {
+                    return 1;
+                }
+
+                return 0;
+            }
+        );
+
+        return $normalized;
     }
 
     /**
@@ -598,7 +933,10 @@ class RozetkaFulfillmentService
 
         $order->loadMissing('items');
 
-        $orderId = $this->getOrderId($order);
+        $orderId =
+            $this->getOrderId(
+                $order
+            );
 
         $allowedStatuses = [
             'confirmed',
@@ -623,7 +961,8 @@ class RozetkaFulfillmentService
         if (
             !$replaceExisting &&
             trim(
-                (string) $order->tracking_number
+                (string)
+                $order->tracking_number
             ) !== ''
         ) {
             throw new RuntimeException(
@@ -637,15 +976,32 @@ class RozetkaFulfillmentService
             $order
         );
 
-        $cargoSeats = $this->buildCargoSeats(
+        /*
+         * Payload для создания ТТН формируем
+         * из наших локальных ProductDimension.
+         */
+        $cargoSeats =
+            $this->buildCargoSeats(
+                $order
+            );
+
+        /*
+         * Но перед реальным POST сравниваем
+         * локальные данные с теми cargoSeats,
+         * которые пришли от Rozetka.
+         *
+         * При конфликте POST не выполняется.
+         */
+        $this->validateCargoSeatsAgainstRozetka(
             $order
         );
 
-        $response = $this->client->createTtn(
-            $orderId,
-            $cargoSeats,
-            $replaceExisting
-        );
+        $response =
+            $this->client->createTtn(
+                $orderId,
+                $cargoSeats,
+                $replaceExisting
+            );
 
         $trackingNumber = trim(
             (string) (
@@ -717,7 +1073,8 @@ class RozetkaFulfillmentService
 
         foreach ($order->items as $item) {
             $confirmedQuantity =
-                (int) $item->confirmed_quantity;
+                (int)
+                $item->confirmed_quantity;
 
             $serialNumbers =
                 $this->decodeSerialNumbers(
@@ -745,8 +1102,9 @@ class RozetkaFulfillmentService
      * @param mixed $value
      * @return array
      */
-    private function decodeSerialNumbers($value)
-    {
+    private function decodeSerialNumbers(
+        $value
+    ) {
         if (is_array($value)) {
             return array_values(
                 array_filter(
@@ -760,16 +1118,20 @@ class RozetkaFulfillmentService
             );
         }
 
-        $value = trim((string) $value);
+        $value =
+            trim(
+                (string) $value
+            );
 
         if ($value === '') {
             return [];
         }
 
-        $decoded = json_decode(
-            $value,
-            true
-        );
+        $decoded =
+            json_decode(
+                $value,
+                true
+            );
 
         if (is_array($decoded)) {
             return array_values(
@@ -788,7 +1150,9 @@ class RozetkaFulfillmentService
          * Совместимость со старыми данными:
          * один SN мог быть сохранён простой строкой.
          */
-        return [$value];
+        return [
+            $value,
+        ];
     }
 
     /**
@@ -800,10 +1164,17 @@ class RozetkaFulfillmentService
         $place,
         $rzCode
     ) {
-        $weight = (float) $place->weight;
-        $length = (float) $place->length;
-        $width = (float) $place->width;
-        $height = (float) $place->height;
+        $weight =
+            (float) $place->weight;
+
+        $length =
+            (float) $place->length;
+
+        $width =
+            (float) $place->width;
+
+        $height =
+            (float) $place->height;
 
         if (
             $weight <= 0 ||
@@ -819,25 +1190,29 @@ class RozetkaFulfillmentService
         }
 
         return [
-            'lengthCm' => round(
-                $length,
-                2
-            ),
+            'lengthCm' =>
+                round(
+                    $length,
+                    2
+                ),
 
-            'widthCm' => round(
-                $width,
-                2
-            ),
+            'widthCm' =>
+                round(
+                    $width,
+                    2
+                ),
 
-            'heightCm' => round(
-                $height,
-                2
-            ),
+            'heightCm' =>
+                round(
+                    $height,
+                    2
+                ),
 
-            'weightKg' => round(
-                $weight,
-                3
-            ),
+            'weightKg' =>
+                round(
+                    $weight,
+                    3
+                ),
         ];
     }
 
@@ -845,11 +1220,13 @@ class RozetkaFulfillmentService
      * @param mixed $rzCode
      * @return ProductDimension
      */
-    private function findDimension($rzCode)
-    {
-        $code = $this->normalizeProductCode(
-            $rzCode
-        );
+    private function findDimension(
+        $rzCode
+    ) {
+        $code =
+            $this->normalizeProductCode(
+                $rzCode
+            );
 
         if ($code === '') {
             throw new RuntimeException(
@@ -862,13 +1239,18 @@ class RozetkaFulfillmentService
                 $this->dimensionCache[$code]
             )
         ) {
-            return $this->dimensionCache[$code];
+            return
+                $this->dimensionCache[$code];
         }
 
-        $dimension = ProductDimension::query()
-            ->with('places')
-            ->where('rz_code', $code)
-            ->first();
+        $dimension =
+            ProductDimension::query()
+                ->with('places')
+                ->where(
+                    'rz_code',
+                    $code
+                )
+                ->first();
 
         if (!$dimension) {
             throw new RuntimeException(
@@ -888,27 +1270,34 @@ class RozetkaFulfillmentService
      * @param mixed $value
      * @return string
      */
-    private function normalizeProductCode($value)
-    {
-        $value = (string) $value;
+    private function normalizeProductCode(
+        $value
+    ) {
+        $value =
+            (string) $value;
 
-        $value = str_replace(
-            "\xC2\xA0",
-            ' ',
+        $value =
+            str_replace(
+                "\xC2\xA0",
+                ' ',
+                $value
+            );
+
+        return trim(
             $value
         );
-
-        return trim($value);
     }
 
     /**
      * @param Order $order
      * @return string
      */
-    private function getOrderId(Order $order)
-    {
+    private function getOrderId(
+        Order $order
+    ) {
         $orderId = trim(
-            (string) $order->guid
+            (string)
+            $order->guid
         );
 
         if ($orderId === '') {

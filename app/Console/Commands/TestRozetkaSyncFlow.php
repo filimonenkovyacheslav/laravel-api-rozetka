@@ -527,6 +527,62 @@ class TestRozetkaSyncFlow extends Command
             'Неправильний supplierCode нового товару.'
         );
 
+        $this->assertTrue(
+            is_array(
+                $newOrder->items
+                    ->first()
+                    ->rozetka_cargo_seats
+            ),
+            'cargoSeats Rozetka не збережено.'
+        );
+
+        $this->assertSame(
+            1,
+            count(
+                $newOrder->items
+                    ->first()
+                    ->rozetka_cargo_seats
+            ),
+            'Кількість збережених cargoSeats'
+        );
+
+        $newItem = $newOrder->items->first();
+
+        $this->assertTrue(
+            is_array($newItem->rozetka_cargo_seats),
+            'cargoSeats Rozetka не збережено в order_items.'
+        );
+
+        $this->assertSame(
+            1,
+            count($newItem->rozetka_cargo_seats),
+            'Некоректна кількість збережених cargoSeats.'
+        );
+
+        $this->assertSame(
+            30,
+            $newItem->rozetka_cargo_seats[0]['lengthCm'],
+            'Некоректно збережено lengthCm.'
+        );
+
+        $this->assertSame(
+            20,
+            $newItem->rozetka_cargo_seats[0]['widthCm'],
+            'Некоректно збережено widthCm.'
+        );
+
+        $this->assertSame(
+            10,
+            $newItem->rozetka_cargo_seats[0]['heightCm'],
+            'Некоректно збережено heightCm.'
+        );
+
+        $this->assertSame(
+            1.5,
+            (float) $newItem->rozetka_cargo_seats[0]['weightKg'],
+            'Некоректно збережено weightKg.'
+        );
+
         /*
          * =====================================================
          * Проверяем неизменённый заказ.
