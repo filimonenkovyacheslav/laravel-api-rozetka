@@ -65,6 +65,16 @@ class RozetkaOrderService
         ];
 
         while (true) {
+            /*
+             * Новая версия Supplier API позволяет
+             * сразу получить полную шапку заказа
+             * и товары в списке.
+             *
+             * Это уменьшает количество HTTP-запросов:
+             * отдельный GET /orders/{orderId}
+             * для каждого нового/изменённого заказа
+             * больше не требуется.
+             */
             $query = array_filter([
                 'dateFrom' =>
                     $filters['dateFrom'] ?? null,
@@ -77,6 +87,9 @@ class RozetkaOrderService
 
                 'page' =>
                     $page,
+
+                'expand' =>
+                    'details,products',
             ], function ($value) {
                 return $value !== null &&
                     $value !== '';
@@ -112,7 +125,7 @@ class RozetkaOrderService
              *
              * API возвращает до 50 заказов на страницу,
              * поэтому нет смысла выполнять отдельный
-             * SELECT по GUID для каждого summary.
+             * SELECT по GUID для каждого заказа.
              */
             $orderIds = collect($orders)
                 ->map(function ($summary) {
@@ -162,10 +175,13 @@ class RozetkaOrderService
                     );
 
                 /*
-                 * Если summary говорит, что локальный
-                 * заказ уже полностью синхронизирован
-                 * и с прошлого раза не изменился,
-                 * GET /orders/{orderId} не выполняем.
+                 * Даже при expand список содержит
+                 * updatedAt и orderStatus.
+                 *
+                 * Если локальная копия уже полностью
+                 * синхронизирована и удалённый заказ
+                 * с прошлого раза не изменился,
+                 * повторно сохранять его не нужно.
                  */
                 if (
                     !$this->shouldFetchDetails(
@@ -179,14 +195,19 @@ class RozetkaOrderService
                 }
 
                 try {
-                    $details =
-                        $this->client->getOrder(
-                            $orderId
-                        );
-
+                    /*
+                     * Благодаря expand=details,products
+                     * $summary уже является полной
+                     * карточкой заказа для целей
+                     * локальной синхронизации.
+                     *
+                     * Отдельный GET
+                     * /dropshipping/orders/{orderId}
+                     * здесь больше не выполняется.
+                     */
                     $syncResult =
                         $this->saveOrder(
-                            $details,
+                            $summary,
                             $dryRun
                         );
 
@@ -229,7 +250,11 @@ class RozetkaOrderService
     }
 
     /**
-     * Определить, нужен ли полный GET заказа.
+     * Определить, нужно ли обрабатывать заказ
+     * из expanded list-response.
+     *
+     * Историческое имя метода сохранено,
+     * чтобы изменение было минимальным.
      *
      * @param array $summary
      * @param Order|null $existingOrder
@@ -263,8 +288,8 @@ class RozetkaOrderService
         );
 
         /*
-         * При некорректном summary безопаснее
-         * запросить полную карточку.
+         * При некорректном ответе безопаснее
+         * обработать заказ повторно.
          */
         if ($remoteStatus === '') {
             return true;
@@ -286,7 +311,7 @@ class RozetkaOrderService
          * содержимого заказа.
          *
          * Если API вообще не прислал это поле,
-         * выполняем detail GET.
+         * безопаснее обработать заказ повторно.
          */
         if (
             !array_key_exists(
@@ -331,7 +356,7 @@ class RozetkaOrderService
         }
 
         /*
-         * Полный запрос нужен только тогда,
+         * Обработка нужна только тогда,
          * когда timestamps отличаются.
          */
         return !$remoteUpdatedAt->equalTo(
@@ -341,6 +366,15 @@ class RozetkaOrderService
 
     /**
      * Сохранить полный заказ Rozetka.
+     *
+     * Данные могут приходить как из:
+     *
+     * GET /dropshipping/orders/{orderId}
+     *
+     * так и из:
+     *
+     * GET /dropshipping/orders
+     *     ?expand=details,products
      *
      * @param array $data
      * @param bool $dryRun
@@ -375,7 +409,8 @@ class RozetkaOrderService
             !$existingOrder;
 
         /*
-         * Dry-run получает реальную detail-карточку,
+         * Dry-run получает реальные данные
+         * expanded list-response,
          * но ничего в БД не изменяет.
          */
         if ($dryRun) {
@@ -651,7 +686,8 @@ class RozetkaOrderService
             }
 
             /*
-             * supplierCode сохраняем без нормализации.
+             * supplierCode сохраняем без дополнительной
+             * нормализации.
              *
              * Это значение должно совпадать
              * с артикулом поставщика в Rozetka.
@@ -767,8 +803,9 @@ class RozetkaOrderService
         }
 
         /*
-         * Full-detail API возвращает полный
-         * состав заказа.
+         * Expanded list-response с products
+         * и full-detail endpoint возвращают
+         * полный состав заказа.
          *
          * Позиции, которых больше нет
          * в ответе Rozetka, удаляем локально.

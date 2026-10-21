@@ -2,6 +2,8 @@
 
 namespace App\Services\Rozetka;
 
+use Illuminate\Http\Client\RequestException;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
 use RuntimeException;
 use Throwable;
@@ -56,6 +58,7 @@ class RozetkaClient
      * dateTo
      * status
      * page
+     * expand
      *
      * @param array $query
      * @return array
@@ -127,7 +130,7 @@ class RozetkaClient
      * @return array
      */
     public function createTtn(
-    $orderId,
+        $orderId,
         array $cargoSeats,
         $replaceExisting = false
     ) {
@@ -192,22 +195,52 @@ class RozetkaClient
 
             /*
              * GET-запросы безопасно повторять автоматически.
+             *
+             * POST автоматически не повторяем:
+             * внешний сервис мог выполнить действие,
+             * даже если корректный ответ не был получен.
              */
             if (strtoupper($method) === 'GET') {
                 $response = $request
-                    ->retry(2, 500)
-                    ->get(
-                        $url,
-                        $data
-                    );
+                ->retry(
+                    2,
+                    500,
+                    function ($exception) {
+                        /*
+                         * Повторяем только безопасные GET,
+                         * если проблема действительно временная:
+                         *
+                         * - transport / connection error;
+                         * - HTTP 5xx.
+                         *
+                         * HTTP 4xx, включая 429, автоматически
+                         * не повторяем.
+                         */
+                        if (
+                            $exception instanceof
+                                ConnectionException
+                        ) {
+                            return true;
+                        }
+
+                        if (
+                            $exception instanceof
+                                RequestException &&
+                            $exception->response
+                        ) {
+                            return
+                                $exception->response
+                                    ->status() >= 500;
+                        }
+
+                        return false;
+                    }
+                )
+                ->get(
+                    $url,
+                    $data
+                );
             } else {
-                /*
-                 * POST автоматически НЕ повторяем.
-                 *
-                 * Особенно важно для создания ТТН:
-                 * внешний сервис мог выполнить действие,
-                 * даже если мы не получили корректный ответ.
-                 */
                 $response = $request->send(
                     strtoupper($method),
                     $url,
@@ -216,6 +249,45 @@ class RozetkaClient
                     ]
                 );
             }
+        } catch (RequestException $e) {
+            /*
+             * retry() может выбросить RequestException
+             * после последней HTTP-ошибки.
+             *
+             * Это не transport error: соединение с API
+             * состоялось и Rozetka вернула HTTP-ответ.
+             *
+             * Особенно важно корректно различать 429,
+             * 4xx и 5xx от ошибок сети.
+             */
+            $response = $e->response;
+
+            if ($response) {
+                $result = $response->json();
+
+                if (!is_array($result)) {
+                    $result = null;
+                }
+
+                throw new RozetkaApiException(
+                    $this->buildErrorMessage(
+                        $response->status(),
+                        $result,
+                        $response->body()
+                    ),
+                    $response->status(),
+                    false,
+                    $e
+                );
+            }
+
+            throw new RozetkaApiException(
+                'Не вдалося підключитися до API Rozetka: ' .
+                $e->getMessage(),
+                null,
+                true,
+                $e
+            );
         } catch (Throwable $e) {
             throw new RozetkaApiException(
                 'Не вдалося підключитися до API Rozetka: ' .
@@ -225,8 +297,6 @@ class RozetkaClient
                 $e
             );
         }
-
-        $result = $response->json();
 
         if (!$response->successful()) {
             $result = $response->json();
@@ -245,6 +315,8 @@ class RozetkaClient
                 false
             );
         }
+
+        $result = $response->json();
 
         if ($result === null) {
             return [];

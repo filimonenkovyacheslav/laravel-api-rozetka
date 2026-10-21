@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Models\Order;
+use App\Services\Rozetka\RozetkaApiException;
 use App\Services\Rozetka\RozetkaOrderService;
 use Illuminate\Console\Command;
 use Illuminate\Http\Client\Factory as HttpFactory;
@@ -19,7 +20,7 @@ class TestRozetkaSyncFlow extends Command
         'rozetka:test-sync-flow';
 
     protected $description =
-        'Локальний тест оптимізованої синхронізації Rozetka через Http::fake';
+        'Локальний тест синхронізації Rozetka через expanded list-response';
 
     public function handle()
     {
@@ -39,10 +40,6 @@ class TestRozetkaSyncFlow extends Command
             'services.rozetka.sync_enabled'
         );
 
-        /*
-         * Включаем sync только внутри
-         * текущего artisan-процесса.
-         */
         config([
             'services.rozetka.api_url' =>
                 'https://fake-rozetka-sync.test',
@@ -61,499 +58,29 @@ class TestRozetkaSyncFlow extends Command
 
         try {
             $this->info(
-                'Тест оптимізованої синхронізації Rozetka'
-            );
-
-            /*
-             * =====================================================
-             * 1. НЕИЗМЕНЁННЫЙ заказ
-             * =====================================================
-             *
-             * status и updatedAt полностью совпадают.
-             * Detail GET выполняться не должен.
-             */
-            $unchangedGuid =
-                (string) Str::uuid();
-
-            $unchanged = $this->createExistingOrder(
-                $unchangedGuid,
-                'confirmed',
-                '2026-10-10 10:00:00',
-                'UNCHANGED'
-            );
-
-            /*
-             * Фиксируем synced_at, чтобы потом убедиться,
-             * что skipped-заказ вообще не трогали.
-             */
-            $unchangedSyncedAt =
-                '2026-10-12 08:00:00';
-
-            $unchanged->forceFill([
-                'rozetka_synced_at' =>
-                    $unchangedSyncedAt,
-            ])->save();
-
-            /*
-             * =====================================================
-             * 2. ИЗМЕНЁННЫЙ заказ
-             * =====================================================
-             *
-             * Локально updatedAt старый.
-             * В summary будет более новый updatedAt.
-             */
-            $changedGuid =
-                (string) Str::uuid();
-
-            $changed = $this->createExistingOrder(
-                $changedGuid,
-                'confirmed',
-                '2026-10-10 11:00:00',
-                'CHANGED'
-            );
-
-            /*
-             * =====================================================
-             * 3. НОВЫЙ заказ
-             * =====================================================
-             *
-             * В локальной БД его вообще нет.
-             */
-            $newGuid =
-                (string) Str::uuid();
-
-            /*
-             * Счётчики HTTP-вызовов.
-             */
-            $calls = [];
-
-            Http::swap(
-                new HttpFactory()
-            );
-
-            Http::fake(function (
-                HttpRequest $request
-            ) use (
-                $unchangedGuid,
-                $changedGuid,
-                $newGuid,
-                &$calls
-            ) {
-                $path = (string) parse_url(
-                    $request->url(),
-                    PHP_URL_PATH
-                );
-
-                $calls[] = [
-                    'method' =>
-                        $request->method(),
-
-                    'path' =>
-                        $path,
-
-                    'data' =>
-                        $request->data(),
-                ];
-
-                /*
-                 * Список заказов.
-                 */
-                if (
-                    $request->method() === 'GET' &&
-                    $path === '/dropshipping/orders'
-                ) {
-                    return Http::response([
-                        'totalCount' => 3,
-                        'currentPage' => 1,
-
-                        'orders' => [
-                            /*
-                             * Полностью совпадает
-                             * с локальным состоянием.
-                             */
-                            [
-                                'orderId' =>
-                                    $unchangedGuid,
-
-                                'createdAt' =>
-                                    '2026-10-09 10:00:00',
-
-                                'updatedAt' =>
-                                    '2026-10-10 10:00:00',
-
-                                'orderStatus' =>
-                                    'confirmed',
-
-                                'itemsCount' =>
-                                    1,
-                            ],
-
-                            /*
-                             * updatedAt изменился.
-                             */
-                            [
-                                'orderId' =>
-                                    $changedGuid,
-
-                                'createdAt' =>
-                                    '2026-10-09 11:00:00',
-
-                                'updatedAt' =>
-                                    '2026-10-12 12:30:00',
-
-                                'orderStatus' =>
-                                    'updated',
-
-                                'itemsCount' =>
-                                    1,
-                            ],
-
-                            /*
-                             * Нового заказа локально нет.
-                             */
-                            [
-                                'orderId' =>
-                                    $newGuid,
-
-                                'createdAt' =>
-                                    '2026-10-12 13:00:00',
-
-                                'updatedAt' =>
-                                    null,
-
-                                'orderStatus' =>
-                                    'new',
-
-                                'itemsCount' =>
-                                    1,
-                            ],
-                        ],
-                    ], 200);
-                }
-
-                /*
-                 * Detail изменённого заказа.
-                 */
-                if (
-                    $request->method() === 'GET' &&
-                    $path ===
-                        '/dropshipping/orders/' .
-                        $changedGuid
-                ) {
-                    return Http::response(
-                        $this->makeOrderDetails(
-                            $changedGuid,
-                            'РОЗ-LOCAL-CHANGED',
-                            'updated',
-                            '2026-10-09 11:00:00',
-                            '2026-10-12 12:30:00',
-                            'LOCAL-SYNC-CHANGED',
-                            493104624
-                        ),
-                        200
-                    );
-                }
-
-                /*
-                 * Detail нового заказа.
-                 */
-                if (
-                    $request->method() === 'GET' &&
-                    $path ===
-                        '/dropshipping/orders/' .
-                        $newGuid
-                ) {
-                    return Http::response(
-                        $this->makeOrderDetails(
-                            $newGuid,
-                            'РОЗ-LOCAL-NEW',
-                            'new',
-                            '2026-10-12 13:00:00',
-                            null,
-                            'LOCAL-SYNC-NEW',
-                            493104624
-                        ),
-                        200
-                    );
-                }
-
-                /*
-                 * Очень важная проверка:
-                 * неизменённый заказ сюда попасть не должен.
-                 */
-                if (
-                    $request->method() === 'GET' &&
-                    $path ===
-                        '/dropshipping/orders/' .
-                        $unchangedGuid
-                ) {
-                    throw new RuntimeException(
-                        'TEST FAILED: виконано detail GET ' .
-                        'для незміненого замовлення.'
-                    );
-                }
-
-                throw new RuntimeException(
-                    'TEST FAILED: несподіваний HTTP-запит: ' .
-                    $request->method() .
-                    ' ' .
-                    $path
-                );
-            });
-
-            $service =
-                app(RozetkaOrderService::class);
-
-            $result = $service->sync([
-                'dateFrom' =>
-                    '2026-09-12 00:00:00',
-
-                'dateTo' =>
-                    '2026-10-12 23:59:59',
-            ]);
-
-            /*
-             * =====================================================
-             * Проверяем итоговые счётчики.
-             * =====================================================
-             */
-            $this->assertSame(
-                3,
-                $result['total'],
-                'total'
-            );
-
-            $this->assertSame(
-                2,
-                $result['processed'],
-                'processed'
-            );
-
-            $this->assertSame(
-                1,
-                $result['created'],
-                'created'
-            );
-
-            $this->assertSame(
-                1,
-                $result['updated'],
-                'updated'
-            );
-
-            $this->assertSame(
-                1,
-                $result['skipped'],
-                'skipped'
-            );
-
-            $this->assertSame(
-                0,
-                $result['failed'],
-                'failed'
-            );
-
-            /*
-             * =====================================================
-             * Проверяем количество HTTP-запросов.
-             * =====================================================
-             */
-            $this->assertSame(
-                1,
-                $this->countCalls(
-                    $calls,
-                    'GET',
-                    '/dropshipping/orders'
-                ),
-                'GET list'
-            );
-
-            $this->assertSame(
-                0,
-                $this->countCalls(
-                    $calls,
-                    'GET',
-                    '/dropshipping/orders/' .
-                        $unchangedGuid
-                ),
-                'detail GET unchanged'
-            );
-
-            $this->assertSame(
-                1,
-                $this->countCalls(
-                    $calls,
-                    'GET',
-                    '/dropshipping/orders/' .
-                        $changedGuid
-                ),
-                'detail GET changed'
-            );
-
-            $this->assertSame(
-                1,
-                $this->countCalls(
-                    $calls,
-                    'GET',
-                    '/dropshipping/orders/' .
-                        $newGuid
-                ),
-                'detail GET new'
-            );
-
-            /*
-             * =====================================================
-             * Проверяем изменённый заказ.
-             * =====================================================
-             */
-            $changed->refresh();
-
-            $this->assertTrue(
-                $changed->rozetka_status ===
-                    'updated',
-                'Змінений заказ не отримав статус updated.'
-            );
-
-            $this->assertTrue(
-                $changed->status ===
-                    'updated',
-                'Не оновлено legacy status зміненого замовлення.'
-            );
-
-            $this->assertTrue(
-                $changed->updated_at_partner !== null &&
-                \Carbon\Carbon::parse(
-                    $changed->updated_at_partner
-                )->format('Y-m-d H:i:s') ===
-                    '2026-10-12 12:30:00',
-                'Не оновлено updated_at_partner.'
-            );
-
-            /*
-             * =====================================================
-             * Проверяем новый заказ.
-             * =====================================================
-             */
-            $newOrder = Order::query()
-                ->with('items')
-                ->where(
-                    'guid',
-                    $newGuid
-                )
-                ->first();
-
-            $this->assertTrue(
-                $newOrder !== null,
-                'Новий заказ не створено.'
-            );
-
-            $this->assertTrue(
-                $newOrder->rozetka_status ===
-                    'new',
-                'Новий заказ має неправильний rozetka_status.'
-            );
-
-            $this->assertTrue(
-                $newOrder->order_num ===
-                    'РОЗ-LOCAL-NEW',
-                'Новий заказ має неправильний order_num.'
-            );
-
-            $this->assertSame(
-                1,
-                $newOrder->items->count(),
-                'Кількість позицій нового замовлення'
-            );
-
-            $this->assertTrue(
-                $newOrder->items
-                    ->first()
-                    ->supplier_code ===
-                    'LOCAL-SYNC-NEW',
-                'Неправильний supplierCode нового товару.'
-            );
-
-            /*
-             * =====================================================
-             * Проверяем неизменённый заказ.
-             * =====================================================
-             */
-            $unchanged->refresh();
-
-            $this->assertTrue(
-                $unchanged->rozetka_status ===
-                    'confirmed',
-                'Незмінений заказ був модифікований.'
-            );
-
-            $this->assertTrue(
-                $unchanged->rozetka_synced_at
-                    ->format('Y-m-d H:i:s') ===
-                    $unchangedSyncedAt,
-                'У skipped-заказа змінився rozetka_synced_at.'
+                'Тест синхронізації Rozetka через expand'
             );
 
             $this->newLine();
 
             $this->info(
-                'Результат sync:'
+                'Тест 1: expand=details,products без detail GET'
             );
 
-            $this->table(
-                [
-                    'Показник',
-                    'Кількість',
-                ],
-                [
-                    [
-                        'Всього',
-                        $result['total'],
-                    ],
-                    [
-                        'Оброблено',
-                        $result['processed'],
-                    ],
-                    [
-                        'Створено',
-                        $result['created'],
-                    ],
-                    [
-                        'Оновлено',
-                        $result['updated'],
-                    ],
-                    [
-                        'Пропущено без detail GET',
-                        $result['skipped'],
-                    ],
-                    [
-                        'Помилок',
-                        $result['failed'],
-                    ],
-                ]
-            );
+            $this->testExpandedSynchronization();
 
             $this->newLine();
 
             $this->info(
-                'HTTP-перевірка:'
+                'Тест 2: HTTP 429 не повторюється та не є transport error'
             );
 
-            $this->line(
-                'OK: новий заказ → detail GET.'
-            );
-
-            $this->line(
-                'OK: змінений заказ → detail GET.'
-            );
-
-            $this->line(
-                'OK: незмінений заказ → detail GET відсутній.'
-            );
+            $this->test429IsNotRetried();
 
             $this->newLine();
 
             $this->info(
-                'Тест оптимізованої синхронізації успішно пройдено.'
+                'Усі fake HTTP-тести синхронізації успішно пройдено.'
             );
 
             $this->line(
@@ -590,6 +117,564 @@ class TestRozetkaSyncFlow extends Command
                     $oldSyncEnabled,
             ]);
         }
+    }
+
+    /**
+     * Проверить новый основной сценарий:
+     *
+     * GET /dropshipping/orders
+     *     ?expand=details,products
+     *
+     * должен сразу вернуть данные,
+     * достаточные для синхронизации.
+     *
+     * Ни одного GET /orders/{orderId}
+     * выполняться не должно.
+     *
+     * @return void
+     */
+    private function testExpandedSynchronization()
+    {
+        /*
+         * =====================================================
+         * 1. НЕИЗМЕНЁННЫЙ заказ
+         * =====================================================
+         *
+         * status и updatedAt полностью совпадают.
+         * Его не сохраняем повторно.
+         */
+        $unchangedGuid =
+            (string) Str::uuid();
+
+        $unchanged =
+            $this->createExistingOrder(
+                $unchangedGuid,
+                'confirmed',
+                '2026-10-10 10:00:00',
+                'UNCHANGED'
+            );
+
+        /*
+         * Фиксируем synced_at, чтобы проверить,
+         * что skipped-заказ не был затронут.
+         */
+        $unchangedSyncedAt =
+            '2026-10-12 08:00:00';
+
+        $unchanged->forceFill([
+            'rozetka_synced_at' =>
+                $unchangedSyncedAt,
+        ])->save();
+
+        /*
+         * =====================================================
+         * 2. ИЗМЕНЁННЫЙ заказ
+         * =====================================================
+         *
+         * Локально updatedAt старый.
+         * В API будет более новый updatedAt.
+         */
+        $changedGuid =
+            (string) Str::uuid();
+
+        $changed =
+            $this->createExistingOrder(
+                $changedGuid,
+                'confirmed',
+                '2026-10-10 11:00:00',
+                'CHANGED'
+            );
+
+        /*
+         * =====================================================
+         * 3. НОВЫЙ заказ
+         * =====================================================
+         *
+         * В локальной БД его нет.
+         */
+        $newGuid =
+            (string) Str::uuid();
+
+        $calls = [];
+
+        /*
+         * Laravel 8 может накапливать fake handlers.
+         * Создаём чистую HTTP factory.
+         */
+        $this->resetHttp();
+
+        Http::fake(function (
+            HttpRequest $request
+        ) use (
+            $unchangedGuid,
+            $changedGuid,
+            $newGuid,
+            &$calls
+        ) {
+            $url =
+                $request->url();
+
+            $path = (string) parse_url(
+                $url,
+                PHP_URL_PATH
+            );
+
+            $queryString =
+                (string) parse_url(
+                    $url,
+                    PHP_URL_QUERY
+                );
+
+            $query = [];
+
+            parse_str(
+                $queryString,
+                $query
+            );
+
+            $calls[] = [
+                'method' =>
+                    $request->method(),
+
+                'path' =>
+                    $path,
+
+                'query' =>
+                    $query,
+
+                'data' =>
+                    $request->data(),
+            ];
+
+            /*
+             * Любой detail GET теперь является ошибкой
+             * теста. Новая схема должна работать
+             * только через expanded list-response.
+             */
+            if (
+                $request->method() === 'GET' &&
+                strpos(
+                    $path,
+                    '/dropshipping/orders/'
+                ) === 0
+            ) {
+                throw new RuntimeException(
+                    'TEST FAILED: виконано зайвий detail GET: ' .
+                    $path
+                );
+            }
+
+            /*
+             * Единственный допустимый запрос.
+             */
+            if (
+                $request->method() === 'GET' &&
+                $path === '/dropshipping/orders'
+            ) {
+                $this->assertSame(
+                    'details,products',
+                    $query['expand'] ?? null,
+                    'expand'
+                );
+
+                $this->assertSame(
+                    '2026-09-12 00:00:00',
+                    $query['dateFrom'] ?? null,
+                    'dateFrom'
+                );
+
+                $this->assertSame(
+                    '2026-10-12 23:59:59',
+                    $query['dateTo'] ?? null,
+                    'dateTo'
+                );
+
+                $this->assertSame(
+                    '1',
+                    isset($query['page'])
+                        ? (string) $query['page']
+                        : null,
+                    'page'
+                );
+
+                return Http::response([
+                    'totalCount' => 3,
+                    'currentPage' => 1,
+
+                    'orders' => [
+                        /*
+                         * Полностью совпадает
+                         * с локальным состоянием.
+                         */
+                        $this->makeExpandedOrder(
+                            $unchangedGuid,
+                            'РОЗ-LOCAL-UNCHANGED',
+                            'confirmed',
+                            '2026-10-09 10:00:00',
+                            '2026-10-10 10:00:00',
+                            'LOCAL-SYNC-UNCHANGED',
+                            493104624
+                        ),
+
+                        /*
+                         * updatedAt и status изменились.
+                         */
+                        $this->makeExpandedOrder(
+                            $changedGuid,
+                            'РОЗ-LOCAL-CHANGED',
+                            'updated',
+                            '2026-10-09 11:00:00',
+                            '2026-10-12 12:30:00',
+                            'LOCAL-SYNC-CHANGED',
+                            493104624
+                        ),
+
+                        /*
+                         * Новый заказ.
+                         */
+                        $this->makeExpandedOrder(
+                            $newGuid,
+                            'РОЗ-LOCAL-NEW',
+                            'new',
+                            '2026-10-12 13:00:00',
+                            null,
+                            'LOCAL-SYNC-NEW',
+                            493104624
+                        ),
+                    ],
+                ], 200);
+            }
+
+            throw new RuntimeException(
+                'TEST FAILED: несподіваний HTTP-запит: ' .
+                $request->method() .
+                ' ' .
+                $path
+            );
+        });
+
+        $service =
+            app(RozetkaOrderService::class);
+
+        $result = $service->sync([
+            'dateFrom' =>
+                '2026-09-12 00:00:00',
+
+            'dateTo' =>
+                '2026-10-12 23:59:59',
+        ]);
+
+        /*
+         * =====================================================
+         * Проверяем итоговые счётчики.
+         * =====================================================
+         */
+        $this->assertSame(
+            3,
+            $result['total'],
+            'total'
+        );
+
+        $this->assertSame(
+            2,
+            $result['processed'],
+            'processed'
+        );
+
+        $this->assertSame(
+            1,
+            $result['created'],
+            'created'
+        );
+
+        $this->assertSame(
+            1,
+            $result['updated'],
+            'updated'
+        );
+
+        $this->assertSame(
+            1,
+            $result['skipped'],
+            'skipped'
+        );
+
+        $this->assertSame(
+            0,
+            $result['failed'],
+            'failed'
+        );
+
+        /*
+         * =====================================================
+         * Проверяем HTTP.
+         * =====================================================
+         *
+         * Теперь должен быть ровно один list GET.
+         */
+        $this->assertSame(
+            1,
+            $this->countCalls(
+                $calls,
+                'GET',
+                '/dropshipping/orders'
+            ),
+            'GET expanded list'
+        );
+
+        $this->assertSame(
+            0,
+            $this->countCalls(
+                $calls,
+                'GET',
+                '/dropshipping/orders/' .
+                    $unchangedGuid
+            ),
+            'detail GET unchanged'
+        );
+
+        $this->assertSame(
+            0,
+            $this->countCalls(
+                $calls,
+                'GET',
+                '/dropshipping/orders/' .
+                    $changedGuid
+            ),
+            'detail GET changed'
+        );
+
+        $this->assertSame(
+            0,
+            $this->countCalls(
+                $calls,
+                'GET',
+                '/dropshipping/orders/' .
+                    $newGuid
+            ),
+            'detail GET new'
+        );
+
+        /*
+         * =====================================================
+         * Проверяем изменённый заказ.
+         * =====================================================
+         */
+        $changed->refresh();
+
+        $this->assertTrue(
+            $changed->rozetka_status ===
+                'updated',
+            'Змінений заказ не отримав статус updated.'
+        );
+
+        $this->assertTrue(
+            $changed->status ===
+                'updated',
+            'Не оновлено legacy status зміненого замовлення.'
+        );
+
+        $this->assertTrue(
+            $changed->updated_at_partner !== null &&
+            \Carbon\Carbon::parse(
+                $changed->updated_at_partner
+            )->format('Y-m-d H:i:s') ===
+                '2026-10-12 12:30:00',
+            'Не оновлено updated_at_partner.'
+        );
+
+        /*
+         * =====================================================
+         * Проверяем новый заказ.
+         * =====================================================
+         */
+        $newOrder = Order::query()
+            ->with('items')
+            ->where(
+                'guid',
+                $newGuid
+            )
+            ->first();
+
+        $this->assertTrue(
+            $newOrder !== null,
+            'Новий заказ не створено.'
+        );
+
+        $this->assertTrue(
+            $newOrder->rozetka_status ===
+                'new',
+            'Новий заказ має неправильний rozetka_status.'
+        );
+
+        $this->assertTrue(
+            $newOrder->order_num ===
+                'РОЗ-LOCAL-NEW',
+            'Новий заказ має неправильний order_num.'
+        );
+
+        $this->assertSame(
+            1,
+            $newOrder->items->count(),
+            'Кількість позицій нового замовлення'
+        );
+
+        $this->assertTrue(
+            $newOrder->items
+                ->first()
+                ->supplier_code ===
+                'LOCAL-SYNC-NEW',
+            'Неправильний supplierCode нового товару.'
+        );
+
+        /*
+         * =====================================================
+         * Проверяем неизменённый заказ.
+         * =====================================================
+         */
+        $unchanged->refresh();
+
+        $this->assertTrue(
+            $unchanged->rozetka_status ===
+                'confirmed',
+            'Незмінений заказ був модифікований.'
+        );
+
+        $this->assertTrue(
+            $unchanged->rozetka_synced_at
+                ->format('Y-m-d H:i:s') ===
+                $unchangedSyncedAt,
+            'У skipped-заказа змінився rozetka_synced_at.'
+        );
+
+        $this->line(
+            'OK: один expanded GET повернув details + products.'
+        );
+
+        $this->line(
+            'OK: новий та змінений закази синхронізовано без detail GET.'
+        );
+
+        $this->line(
+            'OK: незмінений заказ пропущено без запису.'
+        );
+    }
+
+    /**
+     * Проверить найденный на реальном API случай:
+     *
+     * HTTP 429 должен:
+     * - остаться HTTP-ошибкой;
+     * - иметь httpStatus=429;
+     * - transportError=false;
+     * - не вызывать автоматических повторов.
+     *
+     * @return void
+     */
+    private function test429IsNotRetried()
+    {
+        $calls = 0;
+
+        $this->resetHttp();
+
+        Http::fake(function (
+            HttpRequest $request
+        ) use (&$calls) {
+            $calls++;
+
+            $path = (string) parse_url(
+                $request->url(),
+                PHP_URL_PATH
+            );
+
+            if (
+                $request->method() !== 'GET' ||
+                $path !== '/dropshipping/orders'
+            ) {
+                throw new RuntimeException(
+                    'TEST FAILED: несподіваний HTTP-запит у тесті 429.'
+                );
+            }
+
+            return Http::response([
+                'name' =>
+                    'Too Many Requests',
+
+                'message' =>
+                    'Too many requests. Please try again later.',
+
+                'code' =>
+                    0,
+
+                'status' =>
+                    429,
+            ], 429);
+        });
+
+        $service =
+            app(RozetkaOrderService::class);
+
+        $caught = null;
+
+        try {
+            /*
+             * dryRun здесь используется только затем,
+             * чтобы тест вообще не зависел от sync flag.
+             *
+             * До БД выполнение всё равно не дойдёт.
+             */
+            $service->sync(
+                [
+                    'dateFrom' =>
+                        '2026-10-15 00:00:00',
+
+                    'dateTo' =>
+                        '2026-10-21 23:59:59',
+                ],
+                true
+            );
+        } catch (RozetkaApiException $e) {
+            $caught = $e;
+        }
+
+        $this->assertTrue(
+            $caught instanceof RozetkaApiException,
+            'HTTP 429 не повернув RozetkaApiException.'
+        );
+
+        $this->assertSame(
+            429,
+            $caught->getHttpStatus(),
+            'HTTP status для 429'
+        );
+
+        $this->assertSame(
+            false,
+            $caught->isTransportError(),
+            'transportError для HTTP 429'
+        );
+
+        $this->assertSame(
+            1,
+            $calls,
+            'Кількість HTTP-викликів при 429'
+        );
+
+        $this->assertTrue(
+            strpos(
+                $caught->getMessage(),
+                'HTTP 429'
+            ) !== false,
+            'У повідомленні немає HTTP 429.'
+        );
+
+        $this->line(
+            'OK: HTTP 429 розпізнано коректно.'
+        );
+
+        $this->line(
+            'OK: 429 не викликав автоматичного retry.'
+        );
     }
 
     /**
@@ -678,7 +763,12 @@ class TestRozetkaSyncFlow extends Command
     }
 
     /**
-     * Fake full-detail response.
+     * Fake expanded list-order.
+     *
+     * Имитирует элемент:
+     *
+     * GET /dropshipping/orders
+     *     ?expand=details,products
      *
      * @param string $guid
      * @param string $orderNum
@@ -689,7 +779,7 @@ class TestRozetkaSyncFlow extends Command
      * @param int $rzCode
      * @return array
      */
-    private function makeOrderDetails(
+    private function makeExpandedOrder(
         $guid,
         $orderNum,
         $status,
@@ -702,14 +792,20 @@ class TestRozetkaSyncFlow extends Command
             'orderId' =>
                 $guid,
 
-            'orderStatus' =>
-                $status,
-
             'createdAt' =>
                 $createdAt,
 
             'updatedAt' =>
                 $updatedAt,
+
+            'orderStatus' =>
+                $status,
+
+            'uzdStatus' =>
+                'verified',
+
+            'itemsCount' =>
+                1,
 
             'orderNum' =>
                 $orderNum,
@@ -757,7 +853,7 @@ class TestRozetkaSyncFlow extends Command
                 null,
 
             'snRequired' =>
-                0,
+                false,
 
             'products' => [
                 [
@@ -777,9 +873,47 @@ class TestRozetkaSyncFlow extends Command
 
                     'serialNumbers' =>
                         [],
+
+                    /*
+                     * Новое поле в свежей схеме.
+                     *
+                     * Сейчас локальная синхронизация
+                     * его не сохраняет, но ответ API
+                     * должен корректно приниматься.
+                     */
+                    'cargoSeats' => [
+                        [
+                            'lengthCm' =>
+                                30,
+
+                            'widthCm' =>
+                                20,
+
+                            'heightCm' =>
+                                10,
+
+                            'weightKg' =>
+                                1.5,
+
+                            'placeDescription' =>
+                                'Основне місце',
+                        ],
+                    ],
                 ],
             ],
         ];
+    }
+
+    /**
+     * Создать полностью чистый Http fake context.
+     *
+     * @return void
+     */
+    private function resetHttp()
+    {
+        Http::swap(
+            new HttpFactory()
+        );
     }
 
     /**
