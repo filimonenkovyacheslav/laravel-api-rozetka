@@ -563,6 +563,24 @@ class TtnBatchController extends Controller
                 );
             }
 
+            /*
+             * Не удаляем TTN нового Rozetka API
+             * напрямую в Nova Poshta.
+             */
+            if (
+                trim(
+                    (string) $entry->order->rozetka_status
+                ) !== ''
+            ) {
+                throw new \RuntimeException(
+                    'Видалення ТТН заблоковано: замовлення №' .
+                    $entry->order_id .
+                    ' використовує новий Rozetka Supplier API. ' .
+                    'Пряме видалення ТТН у Новій Пошті може ' .
+                    'розсинхронізувати стан замовлення.'
+                );
+            }
+
             $result = $ttnService->deleteForOrder(
                 $entry->order
             );

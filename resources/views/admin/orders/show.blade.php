@@ -4,10 +4,26 @@
 @section('header', 'Order #'.$order->id)
 
 @section('content')
+
+@if(!empty($order->rozetka_status))
+    <div class="alert alert-info mb-0">
+        Замовлення керується через новий Rozetka Supplier API.
+        Ручна зміна статусу, скасування та пряме видалення ТТН
+        у Новій Пошті заблоковані.
+    </div>
+@endif
+
 <div class="mb-3 d-flex">
     <a class="btn btn-sm btn-outline-secondary" href="{{ route('admin.orders.index') }}">← Back</a>
     <div class="ml-auto">
-        <a class="btn btn-sm btn-outline-primary" href="{{ route('admin.orders.edit', $order->id) }}">Подробиці</a>
+        @if(empty($order->rozetka_status))
+            <a
+                class="btn btn-sm btn-outline-primary"
+                href="{{ route('admin.orders.edit', $order->id) }}"
+            >
+                Подробиці
+            </a>
+        @endif
     </div>
 </div>
 
@@ -61,12 +77,25 @@
         <hr>
 
         <div class="d-flex align-items-center">
-            <form method="post" action="{{ route('admin.orders.cancel', $order->id) }}" class="mr-2">
-                @csrf
-                <button class="btn btn-danger" @if($order->status === 'canceled') disabled @endif onclick="return confirm('Ви впевнені що хочете скасувати замовлення?')">
-                    Скасувати замовлення
-                </button>
-            </form>
+            @if(empty($order->rozetka_status))
+                <form
+                    method="post"
+                    action="{{ route('admin.orders.cancel', $order->id) }}"
+                    class="mr-2"
+                >
+                    @csrf
+
+                    <button
+                        class="btn btn-danger"
+                        @if($order->status === 'canceled') disabled @endif
+                        onclick="return confirm(
+                            'Ви впевнені що хочете скасувати замовлення?'
+                        )"
+                    >
+                        Скасувати замовлення
+                    </button>
+                </form>
+            @endif
            
             <!-- <form method="post" action="{{ route('admin.orders.ship', $order->id) }}" class="form-inline">
                 @csrf
@@ -79,7 +108,8 @@
 
             @if(
                 !empty($order->tracking_number) &&
-                !empty($order->np_document_ref)
+                !empty($order->np_document_ref) &&
+                empty($order->rozetka_status)
             )
                 <div style="width: 400px; margin-left: 50px;">
                     <label class="mr-2 mb-0">ТТН</label>
