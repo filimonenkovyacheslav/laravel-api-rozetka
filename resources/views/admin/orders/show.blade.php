@@ -145,14 +145,34 @@
                     <td class="mono"><a href="https://rozetka.com.ua/{{ $it->rz_code }}/p{{ $it->rz_code }}/" target= _blank >{{ $it->rz_code }}</a></td>
                     <td>{{ $it->quantity }}</td>
                     <td><strong>{{ $it->reserved_quantity }}</strong></td>
-                    <td>{{ $it->price }}</td>
+                    <td>
+                        @if($it->price !== null && $it->price !== '')
+                            {{
+                                number_format(
+                                    (float) $it->price,
+                                    2,
+                                    '.',
+                                    ' '
+                                )
+                            }}
+                        @else
+                            <span class="text-muted">—</span>
+                        @endif
+                    </td>
                     <td class="text-right">
                         <a class="btn btn-sm btn-outline-primary" href="{{ route('admin.items.edit', $it->id) }}">Зарезервувати</a>
                     </td>
                 </tr>
             @endforeach
             @if($order->items->count() === 0)
-                <tr><td colspan="6" class="text-center text-muted p-4">No items</td></tr>
+                <tr>
+                    <td
+                        colspan="7"
+                        class="text-center text-muted p-4"
+                    >
+                        No items
+                    </td>
+                </tr>
             @endif
             </tbody>
         </table>
