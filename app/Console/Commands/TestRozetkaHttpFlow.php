@@ -87,6 +87,14 @@ class TestRozetkaHttpFlow extends Command
             $this->newLine();
 
             $this->info(
+                'Тест 5: HTTP 429 не викликає reconciliation GET'
+            );
+
+            $this->test429();
+
+            $this->newLine();
+
+            $this->info(
                 'Усі fake HTTP-тести успішно пройдено.'
             );
 
@@ -733,6 +741,150 @@ class TestRozetkaHttpFlow extends Command
 
         $this->line(
             'OK: 503 залишилась retryable-помилкою.'
+        );
+    }
+
+    /**
+     * HTTP 429 означает rate limit.
+     *
+     * После такого ответа не выполняем
+     * дополнительный reconciliation GET,
+     * чтобы не усугублять rate limit.
+     */
+    private function test429()
+    {
+        $order = $this->createTestOrder(
+            'confirmed',
+            1,
+            '429'
+        );
+
+        $guid = $order->guid;
+        $supplierCode =
+            $order->items->first()->supplier_code;
+
+        $calls = [];
+
+        Http::swap(new HttpFactory());
+
+        Http::fake(function (
+            HttpRequest $request
+        ) use (
+            $guid,
+            $supplierCode,
+            &$calls
+        ) {
+            $path = $this->getPath(
+                $request
+            );
+
+            $calls[] = [
+                'method' => $request->method(),
+                'path' => $path,
+            ];
+
+            if (
+                $request->method() === 'GET' &&
+                $path ===
+                    '/dropshipping/orders/' .
+                    $guid
+            ) {
+                return Http::response(
+                    $this->makeOrderResponse(
+                        $guid,
+                        $supplierCode,
+                        'confirmed',
+                        1,
+                        null
+                    ),
+                    200
+                );
+            }
+
+            if (
+                $request->method() === 'POST' &&
+                $path ===
+                    '/dropshipping/orders/ttn/' .
+                    $guid
+            ) {
+                return Http::response([
+                    'name' =>
+                        'Too Many Requests',
+
+                    'message' =>
+                        'Too many requests. Please try again later.',
+
+                    'code' =>
+                        0,
+
+                    'status' =>
+                        429,
+                ], 429);
+            }
+
+            throw new RuntimeException(
+                'Несподіваний HTTP-запит: ' .
+                $request->method() .
+                ' ' .
+                $path
+            );
+        });
+
+        $service =
+            app(OrderTtnService::class);
+
+        $caught = null;
+
+        try {
+            $service->createForOrder(
+                $order
+            );
+        } catch (Throwable $e) {
+            $caught = $e;
+        }
+
+        $this->assertTrue(
+            $caught instanceof
+                RozetkaApiException,
+            'Для 429 очікувалась RozetkaApiException.'
+        );
+
+        $this->assertTrue(
+            $caught->getHttpStatus() ===
+                429,
+            'Втрачено HTTP status 429.'
+        );
+
+        $this->assertTrue(
+            strpos(
+                $caught->getMessage(),
+                '[ROZETKA_TTN_UNCERTAIN]'
+            ) === false,
+            '429 помилково позначена як uncertain.'
+        );
+
+        $this->assertTrue(
+            $this->countCalls(
+                $calls,
+                'GET',
+                '/dropshipping/orders/' .
+                    $guid
+            ) === 1,
+            'Після 429 не повинен виконуватись повторний GET.'
+        );
+
+        $this->assertTrue(
+            $this->countCalls(
+                $calls,
+                'POST',
+                '/dropshipping/orders/ttn/' .
+                    $guid
+            ) === 1,
+            'POST TTN повинен бути виконаний рівно один раз.'
+        );
+
+        $this->line(
+            'OK: 429 повернуто без повторного GET і без повторного POST.'
         );
     }
 

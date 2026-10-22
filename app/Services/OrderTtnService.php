@@ -189,6 +189,22 @@ class OrderTtnService
                 ->createTtn($order);
         } catch (RozetkaApiException $e) {
             /*
+             * Контрольный GET нужен только тогда,
+             * когда результат POST действительно неоднозначен:
+             *
+             * - HTTP 500;
+             * - transport error / timeout.
+             *
+             * Для 4xx (включая 429) и однозначных 5xx
+             * дополнительный GET не выполняем.
+             */
+            if (
+                $e->getHttpStatus() !== 500 &&
+                !$e->isTransportError()
+            ) {
+                throw $e;
+            }
+            /*
              * POST мог выполниться, несмотря на ошибку ответа.
              * Сначала сверяем заказ.
              */
