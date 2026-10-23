@@ -632,7 +632,7 @@
 
                         if (!finished) {
                             await new Promise(function (resolve) {
-                                setTimeout(resolve, 700);
+                                setTimeout(resolve, 1100);
                             });
                         }
                     } catch (error) {

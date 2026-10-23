@@ -5,6 +5,7 @@ namespace App\Services\Rozetka;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use RuntimeException;
 use Throwable;
 
@@ -187,7 +188,23 @@ class RozetkaClient
             '/'
         );
 
+        $isTtnRequest =
+            strpos(
+                $path,
+                '/dropshipping/orders/ttn/'
+            ) === 0;
+
+        if ($isTtnRequest) {
+            Log::info('ROZETKA TTN REQUEST', [
+                'method' => strtoupper($method),
+                'url' => $url,
+                'payload' => $data,
+            ]);
+        }
+
         try {
+            $this->waitForRateLimit();
+            
             $request = Http::withToken($this->token)
                 ->acceptJson()
                 ->asJson()
@@ -204,7 +221,7 @@ class RozetkaClient
                 $response = $request
                 ->retry(
                     2,
-                    500,
+                    1100,
                     function ($exception) {
                         /*
                          * Повторяем только безопасные GET,
@@ -264,6 +281,76 @@ class RozetkaClient
 
             if ($response) {
                 $result = $response->json();
+
+                if ($isTtnRequest) {
+                    Log::info('ROZETKA TTN RESPONSE', [
+                        'status' => $response->status(),
+
+                        'content_type' =>
+                            $response->header('Content-Type'),
+
+                        'rate_limit_limit' =>
+                            $response->header('X-RateLimit-Limit'),
+
+                        'rate_limit_remaining' =>
+                            $response->header('X-RateLimit-Remaining'),
+
+                        'retry_after' =>
+                            $response->header('Retry-After'),
+
+                        'json' => $result,
+
+                        'body' => is_array($result)
+                            ? null
+                            : $response->body(),
+                    ]);
+                }
+
+                if ($response->status() === 429) {
+                    Log::warning('ROZETKA RATE LIMIT', [
+                        'method' => strtoupper($method),
+                        'path' => $path,
+                        'status' => $response->status(),
+
+                        'retry_after' =>
+                            $response->header('Retry-After'),
+
+                        'rate_limit_limit' =>
+                            $response->header('X-RateLimit-Limit'),
+
+                        'rate_limit_remaining' =>
+                            $response->header('X-RateLimit-Remaining'),
+
+                        'rate_limit_reset' =>
+                            $response->header('X-RateLimit-Reset'),
+
+                        'body' => $response->body(),
+                    ]);
+                }
+
+                if ($isTtnRequest) {
+                    Log::info('ROZETKA TTN RESPONSE', [
+                        'status' => $response->status(),
+
+                        'content_type' =>
+                            $response->header('Content-Type'),
+
+                        'rate_limit_limit' =>
+                            $response->header('X-RateLimit-Limit'),
+
+                        'rate_limit_remaining' =>
+                            $response->header('X-RateLimit-Remaining'),
+
+                        'retry_after' =>
+                            $response->header('Retry-After'),
+
+                        'json' => $result,
+
+                        'body' => is_array($result)
+                            ? null
+                            : $response->body(),
+                    ]);
+                }
 
                 if (!is_array($result)) {
                     $result = null;
@@ -354,6 +441,8 @@ class RozetkaClient
         );
 
         try {
+            $this->waitForRateLimit();
+            
             /*
              * POST print-markings также не повторяем
              * автоматически.
@@ -581,6 +670,77 @@ class RozetkaClient
                 $item,
                 $messages
             );
+        }
+    }
+
+    private function waitForRateLimit()
+    {
+        $lockPath = storage_path(
+            'framework/rozetka-api-rate-limit.lock'
+        );
+
+        $handle = fopen($lockPath, 'c+');
+
+        if ($handle === false) {
+            throw new RuntimeException(
+                'Не вдалося відкрити файл блокування Rozetka API.'
+            );
+        }
+
+        try {
+            if (!flock($handle, LOCK_EX)) {
+                throw new RuntimeException(
+                    'Не вдалося заблокувати Rozetka API.'
+                );
+            }
+
+            rewind($handle);
+
+            $contents = trim(
+                (string) stream_get_contents($handle)
+            );
+
+            $lastRequestAt = $contents !== ''
+                ? (float) $contents
+                : 0.0;
+
+            $now = microtime(true);
+
+            /*
+             * Минимум 1.1 секунды между началом
+             * любых двух запросов к Rozetka API
+             * на этом сервере.
+             */
+            $minimumInterval = 2.0;
+
+            if ($lastRequestAt > 0) {
+                $elapsed = $now - $lastRequestAt;
+
+                if ($elapsed < $minimumInterval) {
+                    usleep(
+                        (int) ceil(
+                            ($minimumInterval - $elapsed)
+                            * 1000000
+                        )
+                    );
+                }
+            }
+
+            $requestStartedAt = microtime(true);
+
+            rewind($handle);
+            ftruncate($handle, 0);
+
+            fwrite(
+                $handle,
+                sprintf('%.6F', $requestStartedAt)
+            );
+
+            fflush($handle);
+
+            flock($handle, LOCK_UN);
+        } finally {
+            fclose($handle);
         }
     }
 }
