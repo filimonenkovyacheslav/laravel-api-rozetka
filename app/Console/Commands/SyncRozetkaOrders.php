@@ -72,6 +72,14 @@ class SyncRozetkaOrders extends Command
                         $result['skipped'],
                     ],
                     [
+                        'PDF Rozetka завантажено',
+                        $result['documents_downloaded'],
+                    ],
+                    [
+                        'Помилок PDF',
+                        $result['document_errors'],
+                    ],
+                    [
                         'Помилок',
                         $result['failed'],
                     ],
@@ -94,9 +102,10 @@ class SyncRozetkaOrders extends Command
                 }
             }
 
-            return $result['failed'] > 0
-                ? 1
-                : 0;
+            return (
+                $result['failed'] > 0 ||
+                $result['document_errors'] > 0
+            ) ? 1 : 0;
         } catch (\Throwable $e) {
             $this->error(
                 $e->getMessage()
