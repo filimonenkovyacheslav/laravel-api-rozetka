@@ -894,26 +894,51 @@ class TestRozetkaHttpFlow extends Command
     }
 
     /**
-     * ЮЗД без звірки: тільки GET, без confirm і TTN POST.
+     * Статус ЮЗД блокує ТТН, але не підтвердження замовлення.
+     * Жоден реальний HTTP-запит не виконується.
      */
     private function testUzdGuard()
     {
         foreach (['not_uploaded', 'problem', null] as $status) {
-            $order = $this->createTestOrder('new', null, 'UZD-' . ($status === null ? 'NULL' : $status));
+            $order = $this->createTestOrder(
+                'confirmed',
+                1,
+                'UZD-' . ($status === null ? 'NULL' : $status)
+            );
             $guid = $order->guid;
             $supplierCode = $order->items->first()->supplier_code;
             $calls = [];
 
             Http::swap(new HttpFactory());
-            Http::fake(function (HttpRequest $request) use ($guid, $supplierCode, $status, &$calls) {
-                $calls[] = $request->method();
-                $this->assertTrue($request->method() === 'GET', 'За неготового ЮЗД не можна виконувати POST.');
-                $response = $this->makeOrderResponse($guid, $supplierCode, 'new', null, null);
+            Http::fake(function (HttpRequest $request) use (
+                $guid,
+                $supplierCode,
+                $status,
+                &$calls
+            ) {
+                $path = $this->getPath($request);
+                $calls[] = [$request->method(), $path];
+
+                $this->assertTrue(
+                    $request->method() === 'GET' &&
+                    $path === '/dropshipping/orders/' . $guid,
+                    'Для confirmed із непідтвердженим ЮЗД очікується тільки GET.'
+                );
+
+                $response = $this->makeOrderResponse(
+                    $guid,
+                    $supplierCode,
+                    'confirmed',
+                    1,
+                    null
+                );
                 $response['uzdStatus'] = $status;
+
                 return Http::response($response, 200);
             });
 
             $blocked = false;
+
             try {
                 app(OrderTtnService::class)->createForOrder($order);
             } catch (RuntimeException $e) {
@@ -921,12 +946,102 @@ class TestRozetkaHttpFlow extends Command
             }
 
             $this->assertTrue($blocked, 'Не заблоковано ТТН за ЮЗД.');
-            $this->assertTrue($calls === ['GET'], 'За неготового ЮЗД має бути тільки один GET.');
+            $this->assertTrue(
+                count($calls) === 1 && $calls[0] === [
+                    'GET',
+                    '/dropshipping/orders/' . $guid,
+                ],
+                'Для confirmed із неготовим ЮЗД має бути тільки один GET.'
+            );
+
             $order->refresh();
-            $this->assertTrue($order->uzd_status === $status, 'Не збережено uzdStatus із GET.');
+            $this->assertTrue(
+                $order->uzd_status === $status,
+                'Не збережено uzdStatus із GET.'
+            );
         }
 
-        $this->line('OK: ЮЗД not_uploaded/problem/null блокують усі POST.');
+        // Нове замовлення: confirm дозволений, POST /ttn заблокований.
+        $order = $this->createTestOrder('new', null, 'UZD-NEW');
+        $guid = $order->guid;
+        $supplierCode = $order->items->first()->supplier_code;
+        $calls = [];
+
+        Http::swap(new HttpFactory());
+        Http::fake(function (HttpRequest $request) use (
+            $guid,
+            $supplierCode,
+            &$calls
+        ) {
+            $path = $this->getPath($request);
+            $calls[] = [$request->method(), $path];
+
+            if (
+                $request->method() === 'GET' &&
+                $path === '/dropshipping/orders/' . $guid
+            ) {
+                $response = $this->makeOrderResponse(
+                    $guid,
+                    $supplierCode,
+                    'new',
+                    null,
+                    null
+                );
+                $response['uzdStatus'] = 'not_uploaded';
+
+                return Http::response($response, 200);
+            }
+
+            if (
+                $request->method() === 'POST' &&
+                $path === '/dropshipping/orders/confirm/' . $guid
+            ) {
+                return Http::response([
+                    'orderId' => $guid,
+                    'orderStatus' => 'confirmed',
+                    'products' => [
+                        [
+                            'supplierCode' => $supplierCode,
+                            'confirmedQuantity' => 1,
+                            'serialNumbers' => [],
+                        ],
+                    ],
+                    'warnings' => [],
+                ], 200);
+            }
+
+            throw new RuntimeException(
+                'Несподіваний запит за непідтвердженого ЮЗД: ' .
+                $request->method() . ' ' . $path
+            );
+        });
+
+        $blocked = false;
+
+        try {
+            app(OrderTtnService::class)->createForOrder($order);
+        } catch (RuntimeException $e) {
+            $blocked = strpos($e->getMessage(), 'ЮЗД') !== false;
+        }
+
+        $this->assertTrue($blocked, 'Не заблоковано TTN для new/not_uploaded.');
+        $this->assertTrue(
+            $calls === [
+                ['GET', '/dropshipping/orders/' . $guid],
+                ['POST', '/dropshipping/orders/confirm/' . $guid],
+            ],
+            'Для new/not_uploaded потрібно виконати GET і confirm, без TTN POST.'
+        );
+        $order->refresh();
+        $this->assertTrue(
+            $order->rozetka_status === 'confirmed' &&
+            $order->uzd_status === 'not_uploaded',
+            'Після підтвердження замовлення статуси збережено неправильно.'
+        );
+
+        $this->line(
+            'OK: неготовий ЮЗД блокує ТТН, але не блокує confirm.'
+        );
     }
 
     /**
