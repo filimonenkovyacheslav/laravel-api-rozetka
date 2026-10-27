@@ -307,6 +307,15 @@ class RozetkaOrderService
         }
 
         /*
+         * Статус ЮЗД может поменяться без изменения orderStatus/updatedAt.
+         */
+        if (array_key_exists('uzdStatus', $summary) &&
+            $summary['uzdStatus'] !== $existingOrder->uzd_status
+        ) {
+            return true;
+        }
+
+        /*
          * updatedAt — основной признак изменения
          * содержимого заказа.
          *
@@ -458,6 +467,10 @@ class RozetkaOrderService
                 $order->rozetka_status =
                     $data['orderStatus']
                     ?? null;
+
+                if (array_key_exists('uzdStatus', $data)) {
+                    $order->uzd_status = $data['uzdStatus'];
+                }
 
                 $order->status =
                     $this->mapInternalStatus(
