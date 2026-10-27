@@ -352,6 +352,7 @@
             Завантажити файли
         </button>
 
+        {{-- Тимчасово приховано масове формування ТТН.
         <button
             type="submit"
             id="create-ttn-batch-button"
@@ -362,6 +363,7 @@
         >
             Масово сформувати ТТН
         </button>
+        --}}
 
         <span class="text-muted small ml-2">
             Вибрано замовлень:
@@ -962,7 +964,7 @@ document.addEventListener('DOMContentLoaded', function () {
             label;
     });
 
-    // NP TTN
+    /* NP TTN temporarily hidden (button disabled in Blade).
     var createButton = document.getElementById(
         'create-ttn-batch-button'
     );
@@ -994,7 +996,7 @@ document.addEventListener('DOMContentLoaded', function () {
             event.preventDefault();
         }
     });
-    // END NP TTN
+    END NP TTN */
     
     updateSelectionState();
 });
