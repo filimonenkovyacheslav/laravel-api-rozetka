@@ -16,9 +16,17 @@ class RozetkaOrderService
      */
     private $client;
 
-    public function __construct(RozetkaClient $client)
-    {
+    /**
+     * @var RozetkaDocumentFileService
+     */
+    private $documentFiles;
+
+    public function __construct(
+        RozetkaClient $client,
+        RozetkaDocumentFileService $documentFiles
+    ) {
         $this->client = $client;
+        $this->documentFiles = $documentFiles;
     }
 
     /**
@@ -61,6 +69,8 @@ class RozetkaOrderService
             'updated' => 0,
             'skipped' => 0,
             'failed' => 0,
+            'documents_downloaded' => 0,
+            'document_errors' => 0,
             'errors' => [],
         ];
 
@@ -191,6 +201,18 @@ class RozetkaOrderService
                 ) {
                     $result['skipped']++;
 
+                    /*
+                     * A documentLink can already be in orders, but its
+                     * PDF may not have been downloaded (backfill/retry).
+                     * Do not require a change of status or updatedAt.
+                     */
+                    if (!$dryRun && $existingOrder) {
+                        $this->downloadDocumentSafely(
+                            $existingOrder,
+                            $result
+                        );
+                    }
+
                     continue;
                 }
 
@@ -217,6 +239,19 @@ class RozetkaOrderService
                         $result['created']++;
                     } else {
                         $result['updated']++;
+                    }
+
+                    if (!$dryRun) {
+                        $syncedOrder = Order::find(
+                            $syncResult['id']
+                        );
+
+                        if ($syncedOrder) {
+                            $this->downloadDocumentSafely(
+                                $syncedOrder,
+                                $result
+                            );
+                        }
                     }
                 } catch (Throwable $e) {
                     $result['failed']++;
@@ -316,6 +351,18 @@ class RozetkaOrderService
         }
 
         /*
+         * The document URL can appear after TTN creation without
+         * a corresponding change in the order's updatedAt.
+         */
+        if (
+            array_key_exists('documentLink', $summary) &&
+            trim((string) $summary['documentLink']) !==
+                trim((string) $existingOrder->document_link)
+        ) {
+            return true;
+        }
+
+        /*
          * updatedAt — основной признак изменения
          * содержимого заказа.
          *
@@ -371,6 +418,31 @@ class RozetkaOrderService
         return !$remoteUpdatedAt->equalTo(
             $localUpdatedAt
         );
+    }
+
+    /**
+     * Download errors must not roll back an otherwise successful
+     * order synchronization. They are reported and retried on the
+     * next sync, including for orders skipped as unchanged.
+     */
+    private function downloadDocumentSafely(
+        Order $order,
+        array &$result
+    ) {
+        try {
+            if ($this->documentFiles->downloadIfNeeded($order)) {
+                $result['documents_downloaded']++;
+            }
+        } catch (Throwable $e) {
+            $result['document_errors']++;
+
+            $result['errors'][] =
+                'Документ замовлення ' .
+                ($order->order_num ?: $order->guid) .
+                ': ' . $e->getMessage();
+
+            report($e);
+        }
     }
 
     /**
