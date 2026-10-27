@@ -43,6 +43,11 @@
             <div class="col-md-6">
                 <div><span class="text-muted">GUID:</span> <span class="mono">{{ $order->guid }}</span></div>
                 <div><span class="text-muted">Статус:</span> <span class="badge {{ $statusClass }}">{{ $order->status }}</span></div>
+                @if(!empty($order->rozetka_status))
+                    <div><span class="text-muted">ЮЗД (Вчасно):</span>
+                        <span class="badge {{ in_array($order->uzd_status, ['verified', 'skipped'], true) ? 'badge-success' : 'badge-warning' }}">{{ $order->uzd_status ?: 'невідомий' }}</span>
+                    </div>
+                @endif
                 <div><span class="text-muted">Клієнт:</span> {{ $order->customer_name }}</div>
                 <div><span class="text-muted">Телефон:</span> <span class="mono">{{ $order->delivery_phone }}</span></div>
                 <div><span class="text-muted">Місто:</span> {{ $order->delivery_city }}</div>
