@@ -84,9 +84,6 @@ class OrderTtnService
             );
         }
 
-        // Перед будь-яким POST перевіряємо ЮЗД з актуального GET.
-        $this->rozetkaService->assertUzdReadyForTtn($order);
-
         $status = trim(
             (string) $order->rozetka_status
         );
@@ -186,6 +183,10 @@ class OrderTtnService
                 $order
             );
         }
+
+        // ЮЗД перевіряємо лише перед створенням ТТН,
+        // не блокуючи підтвердження нового замовлення.
+        $this->rozetkaService->assertUzdReadyForTtn($order);
 
         try {
             return $this->rozetkaService
