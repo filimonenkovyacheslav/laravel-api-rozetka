@@ -6,11 +6,35 @@ use Illuminate\Database\Eloquent\Model;
 
 class Order extends Model {
     protected $fillable = [
-        'guid','comment','status','delivery_type',
-        'cash_on_delivery','delivery_company','delivery_address_id',
-        'delivery_city','delivery_street',
-        'delivery_phone','customer_name',
-        'created_at_partner','updated_at_partner','tracking_number'
+        'guid',
+        'order_num',
+        'comment',
+        'status',
+        'rozetka_status',
+        'uzd_status',
+        'delivery_type',
+        'cash_on_delivery',
+        'delivery_company',
+        'delivery_address_id',
+        'delivery_city',
+        'delivery_street',
+        'delivery_phone',
+        'customer_name',
+        'tracking_number',
+        'tracking_status_code',
+        'tracking_status',
+        'return_ttn',
+        'document_link',
+        'incoming_invoice_number',
+        'sn_required',
+        'created_at_partner',
+        'updated_at_partner',
+        'rozetka_synced_at',
+    ];
+
+    protected $casts = [
+        'sn_required' => 'boolean',
+        'rozetka_synced_at' => 'datetime',
     ];
 
     public function items() {

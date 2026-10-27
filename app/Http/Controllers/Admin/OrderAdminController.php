@@ -138,6 +138,20 @@ class OrderAdminController extends Controller
 
     public function update(Request $request, Order $order)
     {
+        if ($this->isNewRozetkaOrder($order)) {
+            return redirect()
+                ->route(
+                    'admin.orders.show',
+                    $order
+                )
+                ->with(
+                    'err',
+                    'Ручне редагування замовлень нового ' .
+                    'Rozetka Supplier API заблоковано. ' .
+                    'Дані оновлюються через синхронізацію з Rozetka.'
+                );
+        }
+
         $data = $request->validate([
             'status' => ['required', Rule::in(['pending','created','updated','shipped','canceled'])],
 
@@ -167,14 +181,54 @@ class OrderAdminController extends Controller
 
     public function cancel(Order $order)
     {
-        if ($order->status !== 'canceled') {
-            $order->update(['status' => 'canceled']);
+        if ($this->isNewRozetkaOrder($order)) {
+            return redirect()
+                ->route(
+                    'admin.orders.show',
+                    $order
+                )
+                ->with(
+                    'err',
+                    'Локальне скасування замовлення нового ' .
+                    'Rozetka Supplier API заблоковано. ' .
+                    'Статус замовлення має залишатися ' .
+                    'синхронізованим з Rozetka.'
+                );
         }
-        return redirect()->route('admin.orders.show', $order)->with('ok', 'Order canceled');
+
+        if ($order->status !== 'canceled') {
+            $order->update([
+                'status' => 'canceled',
+            ]);
+        }
+
+        return redirect()
+            ->route(
+                'admin.orders.show',
+                $order
+            )
+            ->with(
+                'ok',
+                'Order canceled'
+            );
     }
 
     public function ship(Request $request, Order $order)
     {
+        if ($this->isNewRozetkaOrder($order)) {
+            return redirect()
+                ->route(
+                    'admin.orders.show',
+                    $order
+                )
+                ->with(
+                    'err',
+                    'Ручне відвантаження замовлень нового ' .
+                    'Rozetka Supplier API заблоковано. ' .
+                    'ТТН має створюватися через Rozetka fulfillment flow.'
+                );
+        }
+
         if ($order->status === 'canceled') {
             return redirect()->route('admin.orders.show', $order)->with('err', 'Canceled order cannot be shipped');
         }
@@ -232,13 +286,38 @@ class OrderAdminController extends Controller
         Order $order,
         NovaPoshtaTtnService $ttnService
     ) {
+        /*
+         * ТТН нового Rozetka Supplier API нельзя удалять
+         * напрямую через Nova Poshta.
+         *
+         * В новом API нет безопасного delete-TTN flow,
+         * который синхронно очищал бы состояние Rozetka.
+         */
+        if ($this->isNewRozetkaOrder($order)) {
+            return redirect()
+                ->route(
+                    'admin.orders.show',
+                    $order
+                )
+                ->with(
+                    'err',
+                    'Видалення ТТН для замовлень нового ' .
+                    'Rozetka Supplier API заблоковано. ' .
+                    'Пряме видалення в Новій Пошті може ' .
+                    'розсинхронізувати замовлення з Rozetka.'
+                );
+        }
+
         try {
             $result = $ttnService->deleteForOrder(
                 $order
             );
 
             return redirect()
-                ->route('admin.orders.show', $order)
+                ->route(
+                    'admin.orders.show',
+                    $order
+                )
                 ->with(
                     'ok',
                     'ТТН ' .
@@ -249,12 +328,22 @@ class OrderAdminController extends Controller
             report($e);
 
             return redirect()
-                ->route('admin.orders.show', $order)
+                ->route(
+                    'admin.orders.show',
+                    $order
+                )
                 ->with(
                     'err',
                     'Не вдалося видалити ТТН: ' .
                     $e->getMessage()
                 );
         }
+    }
+
+    private function isNewRozetkaOrder(Order $order)
+    {
+        return trim(
+            (string) $order->rozetka_status
+        ) !== '';
     }
 }

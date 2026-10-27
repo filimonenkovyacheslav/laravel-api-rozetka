@@ -4,10 +4,26 @@
 @section('header', 'Order #'.$order->id)
 
 @section('content')
+
+@if(!empty($order->rozetka_status))
+    <div class="alert alert-info mb-0">
+        Замовлення керується через новий Rozetka Supplier API.
+        Ручна зміна статусу, скасування та пряме видалення ТТН
+        у Новій Пошті заблоковані.
+    </div>
+@endif
+
 <div class="mb-3 d-flex">
     <a class="btn btn-sm btn-outline-secondary" href="{{ route('admin.orders.index') }}">← Back</a>
     <div class="ml-auto">
-        <a class="btn btn-sm btn-outline-primary" href="{{ route('admin.orders.edit', $order->id) }}">Подробиці</a>
+        @if(empty($order->rozetka_status))
+            <a
+                class="btn btn-sm btn-outline-primary"
+                href="{{ route('admin.orders.edit', $order->id) }}"
+            >
+                Подробиці
+            </a>
+        @endif
     </div>
 </div>
 
@@ -27,6 +43,11 @@
             <div class="col-md-6">
                 <div><span class="text-muted">GUID:</span> <span class="mono">{{ $order->guid }}</span></div>
                 <div><span class="text-muted">Статус:</span> <span class="badge {{ $statusClass }}">{{ $order->status }}</span></div>
+                @if(!empty($order->rozetka_status))
+                    <div><span class="text-muted">ЮЗД (Вчасно):</span>
+                        <span class="badge {{ in_array($order->uzd_status, ['verified', 'skipped'], true) ? 'badge-success' : 'badge-warning' }}">{{ $order->uzd_status ?: 'невідомий' }}</span>
+                    </div>
+                @endif
                 <div><span class="text-muted">Клієнт:</span> {{ $order->customer_name }}</div>
                 <div><span class="text-muted">Телефон:</span> <span class="mono">{{ $order->delivery_phone }}</span></div>
                 <div><span class="text-muted">Місто:</span> {{ $order->delivery_city }}</div>
@@ -61,12 +82,25 @@
         <hr>
 
         <div class="d-flex align-items-center">
-            <form method="post" action="{{ route('admin.orders.cancel', $order->id) }}" class="mr-2">
-                @csrf
-                <button class="btn btn-danger" @if($order->status === 'canceled') disabled @endif onclick="return confirm('Ви впевнені що хочете скасувати замовлення?')">
-                    Скасувати замовлення
-                </button>
-            </form>
+            @if(empty($order->rozetka_status))
+                <form
+                    method="post"
+                    action="{{ route('admin.orders.cancel', $order->id) }}"
+                    class="mr-2"
+                >
+                    @csrf
+
+                    <button
+                        class="btn btn-danger"
+                        @if($order->status === 'canceled') disabled @endif
+                        onclick="return confirm(
+                            'Ви впевнені що хочете скасувати замовлення?'
+                        )"
+                    >
+                        Скасувати замовлення
+                    </button>
+                </form>
+            @endif
            
             <!-- <form method="post" action="{{ route('admin.orders.ship', $order->id) }}" class="form-inline">
                 @csrf
@@ -79,7 +113,8 @@
 
             @if(
                 !empty($order->tracking_number) &&
-                !empty($order->np_document_ref)
+                !empty($order->np_document_ref) &&
+                empty($order->rozetka_status)
             )
                 <div style="width: 400px; margin-left: 50px;">
                     <label class="mr-2 mb-0">ТТН</label>
@@ -145,14 +180,34 @@
                     <td class="mono"><a href="https://rozetka.com.ua/{{ $it->rz_code }}/p{{ $it->rz_code }}/" target= _blank >{{ $it->rz_code }}</a></td>
                     <td>{{ $it->quantity }}</td>
                     <td><strong>{{ $it->reserved_quantity }}</strong></td>
-                    <td>{{ $it->price }}</td>
+                    <td>
+                        @if($it->price !== null && $it->price !== '')
+                            {{
+                                number_format(
+                                    (float) $it->price,
+                                    2,
+                                    '.',
+                                    ' '
+                                )
+                            }}
+                        @else
+                            <span class="text-muted">—</span>
+                        @endif
+                    </td>
                     <td class="text-right">
                         <a class="btn btn-sm btn-outline-primary" href="{{ route('admin.items.edit', $it->id) }}">Зарезервувати</a>
                     </td>
                 </tr>
             @endforeach
             @if($order->items->count() === 0)
-                <tr><td colspan="6" class="text-center text-muted p-4">No items</td></tr>
+                <tr>
+                    <td
+                        colspan="7"
+                        class="text-center text-muted p-4"
+                    >
+                        No items
+                    </td>
+                </tr>
             @endif
             </tbody>
         </table>

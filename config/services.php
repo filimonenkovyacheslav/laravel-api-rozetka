@@ -39,6 +39,40 @@ return [
         'recipient' => env('ORDER_REPORT_EMAIL'),
     ],
 
+    'rozetka' => [
+        'api_url' => env(
+            'ROZETKA_API_URL',
+            'https://api-cabinet-supplier.rozetka.com.ua'
+        ),
+
+        'jwt_token' => env('ROZETKA_API_TOKEN'),
+
+        'timeout' => (int) env(
+            'ROZETKA_API_TIMEOUT',
+            40
+        ),
+
+        'sync_enabled' => filter_var(
+            env('ROZETKA_SYNC_ENABLED', false),
+            FILTER_VALIDATE_BOOLEAN
+        ),
+
+        'sync_lookback_days' => (int) env(
+            'ROZETKA_SYNC_LOOKBACK_DAYS',
+            30
+        ),
+
+        'sync_reconcile_days' => (int) env(
+            'ROZETKA_SYNC_RECONCILE_DAYS',
+            120
+        ),
+
+        'actions_enabled' => filter_var(
+            env('ROZETKA_ACTIONS_ENABLED', false),
+            FILTER_VALIDATE_BOOLEAN
+        ),
+    ],
+
     'nova_poshta' => [
         'api_key' => env('NOVA_POSHTA_API_KEY'),
 

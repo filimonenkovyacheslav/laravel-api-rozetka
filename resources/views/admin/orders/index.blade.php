@@ -694,21 +694,40 @@
                                                             );
                                                         }
 
-                                                        $price = (float) (
-                                                            data_get($item, 'price')
-                                                            ?? data_get(
-                                                                $item,
-                                                                'unit_price'
-                                                            )
-                                                            ?? data_get(
-                                                                $item,
-                                                                'sale_price'
-                                                            )
-                                                            ?? 0
+                                                        $price = data_get(
+                                                            $item,
+                                                            'price'
                                                         );
 
+                                                        if (
+                                                            $price === null ||
+                                                            $price === ''
+                                                        ) {
+                                                            $price = data_get(
+                                                                $item,
+                                                                'unit_price'
+                                                            );
+                                                        }
+
+                                                        if (
+                                                            $price === null ||
+                                                            $price === ''
+                                                        ) {
+                                                            $price = data_get(
+                                                                $item,
+                                                                'sale_price'
+                                                            );
+                                                        }
+
+                                                        $hasPrice =
+                                                            $price !== null &&
+                                                            $price !== '';
+
                                                         $itemTotal =
-                                                            (float) $quantity * $price;
+                                                            $hasPrice
+                                                                ? (float) $quantity *
+                                                                    (float) $price
+                                                                : null;
                                                     @endphp
 
                                                     <tr>
@@ -734,25 +753,33 @@
                                                         </td>
 
                                                         <td class="text-right">
-                                                            {{
-                                                                number_format(
-                                                                    $price,
-                                                                    2,
-                                                                    '.',
-                                                                    ' '
-                                                                )
-                                                            }}
+                                                            @if($hasPrice)
+                                                                {{
+                                                                    number_format(
+                                                                        (float) $price,
+                                                                        2,
+                                                                        '.',
+                                                                        ' '
+                                                                    )
+                                                                }}
+                                                            @else
+                                                                <span class="text-muted">—</span>
+                                                            @endif
                                                         </td>
 
                                                         <td class="text-right">
-                                                            {{
-                                                                number_format(
-                                                                    $itemTotal,
-                                                                    2,
-                                                                    '.',
-                                                                    ' '
-                                                                )
-                                                            }}
+                                                            @if($itemTotal !== null)
+                                                                {{
+                                                                    number_format(
+                                                                        $itemTotal,
+                                                                        2,
+                                                                        '.',
+                                                                        ' '
+                                                                    )
+                                                                }}
+                                                            @else
+                                                                <span class="text-muted">—</span>
+                                                            @endif
                                                         </td>
                                                     </tr>
                                                 @endforeach

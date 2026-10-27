@@ -10,6 +10,8 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use App\Services\NovaPoshta\NovaPoshtaTtnService;
 use Throwable;
+use App\Services\OrderTtnService;
+use App\Services\Rozetka\RozetkaMarkingService;
 
 class TtnBatchController extends Controller
 {
@@ -174,9 +176,36 @@ class TtnBatchController extends Controller
             },
         ]);
 
+        /*
+         * Количество записей, которые потенциально
+         * могут попасть в Rozetka print-markings.
+         *
+         * Финальную проверку всё равно выполняет
+         * RozetkaMarkingService.
+         */
+        $rozetkaMarkingsCount =
+            $batch->entries
+                ->filter(function ($entry) {
+                    return
+                        $entry->status === 'success' &&
+                        trim(
+                            (string)
+                            $entry->tracking_number
+                        ) !== '' &&
+                        $entry->order &&
+                        trim(
+                            (string)
+                            $entry->order->rozetka_status
+                        ) !== '';
+                })
+                ->count();
+
         return view(
             'admin.ttn-batches.show',
-            compact('batch')
+            compact(
+                'batch',
+                'rozetkaMarkingsCount'
+            )
         );
     }
 
@@ -202,7 +231,7 @@ class TtnBatchController extends Controller
      */
     public function processNext(
         TtnBatch $batch,
-        NovaPoshtaTtnService $ttnService
+        OrderTtnService $ttnService
     ) {
         /*
          * Атомарно резервируем следующую запись,
@@ -414,6 +443,89 @@ class TtnBatchController extends Controller
         ];
     }
 
+    /**
+     * Скачать PDF-маркировки Новой Почты,
+     * сформированные через Rozetka Supplier API.
+     */
+    public function printRozetkaMarkings(
+        Request $request,
+        TtnBatch $batch,
+        RozetkaMarkingService $markingService
+    ) {
+        $validated = $request->validate([
+            'size' => [
+                'nullable',
+                'in:85x85,100x100',
+            ],
+        ]);
+
+        $size =
+            $validated['size']
+            ?? '85x85';
+
+        try {
+            $result =
+                $markingService->printBatchPdf(
+                    $batch,
+                    $size
+                );
+
+            $contentDisposition = trim(
+                (string) (
+                    $result['content_disposition']
+                    ?? ''
+                )
+            );
+
+            if ($contentDisposition === '') {
+                $contentDisposition =
+                    'attachment; filename="' .
+                    'rozetka-markings-batch-' .
+                    $batch->id .
+                    '-' .
+                    $size .
+                    '.pdf"';
+            }
+
+            return response(
+                $result['body'],
+                200,
+                [
+                    'Content-Type' =>
+                        $result['content_type']
+                        ?: 'application/pdf',
+
+                    'Content-Disposition' =>
+                        $contentDisposition,
+
+                    /*
+                     * Передаём счётчики дальше,
+                     * чтобы их можно было проверить
+                     * в DevTools/автотестах.
+                     */
+                    'X-Markings-Printed' =>
+                        (string)
+                        $result['printed'],
+
+                    'X-Markings-Skipped' =>
+                        (string)
+                        $result['skipped'],
+
+                    'Cache-Control' =>
+                        'private, no-store, no-cache, must-revalidate',
+                ]
+            );
+        } catch (Throwable $e) {
+            report($e);
+
+            return back()->with(
+                'error',
+                'Не вдалося сформувати маркування Rozetka: ' .
+                $e->getMessage()
+            );
+        }
+    }
+
     public function deleteNext(
         TtnBatch $batch,
         NovaPoshtaTtnService $ttnService
@@ -448,6 +560,24 @@ class TtnBatchController extends Controller
                     'Замовлення №' .
                     $entry->order_id .
                     ' не знайдено.'
+                );
+            }
+
+            /*
+             * Не удаляем TTN нового Rozetka API
+             * напрямую в Nova Poshta.
+             */
+            if (
+                trim(
+                    (string) $entry->order->rozetka_status
+                ) !== ''
+            ) {
+                throw new \RuntimeException(
+                    'Видалення ТТН заблоковано: замовлення №' .
+                    $entry->order_id .
+                    ' використовує новий Rozetka Supplier API. ' .
+                    'Пряме видалення ТТН у Новій Пошті може ' .
+                    'розсинхронізувати стан замовлення.'
                 );
             }
 
@@ -508,56 +638,166 @@ class TtnBatchController extends Controller
 
     public function retryFailed(TtnBatch $batch)
     {
-        $retriedCount = DB::transaction(function () use ($batch) {
+        $result = DB::transaction(function () use ($batch) {
             $failedEntries = TtnBatchOrder::query()
-                ->where('ttn_batch_id', $batch->id)
-                ->where('status', 'failed')
+                ->where(
+                    'ttn_batch_id',
+                    $batch->id
+                )
+                ->where(
+                    'status',
+                    'failed'
+                )
                 ->lockForUpdate()
                 ->get();
 
             if ($failedEntries->isEmpty()) {
-                return 0;
+                return [
+                    'retried' => 0,
+                    'blocked' => 0,
+                ];
             }
 
-            TtnBatchOrder::query()
-                ->whereIn(
-                    'id',
-                    $failedEntries->pluck('id')->all()
-                )
-                ->update([
-                    'status' => 'pending',
-                    'tracking_number' => null,
-                    'error_message' => null,
-                    'processed_at' => null,
-                    'updated_at' => now(),
-                ]);
+            /*
+             * Эти записи нельзя автоматически повторять:
+             * существует риск создать дубликат ТТН.
+             */
+            $blockedEntries =
+                $failedEntries->filter(
+                    function ($entry) {
+                        return strpos(
+                            (string) $entry->error_message,
+                            '[ROZETKA_TTN_UNCERTAIN]'
+                        ) !== false;
+                    }
+                );
 
-            $successCount = TtnBatchOrder::query()
-                ->where('ttn_batch_id', $batch->id)
-                ->where('status', 'success')
-                ->count();
+            $retryableEntries =
+                $failedEntries->reject(
+                    function ($entry) {
+                        return strpos(
+                            (string) $entry->error_message,
+                            '[ROZETKA_TTN_UNCERTAIN]'
+                        ) !== false;
+                    }
+                );
+
+            if ($retryableEntries->isNotEmpty()) {
+                TtnBatchOrder::query()
+                    ->whereIn(
+                        'id',
+                        $retryableEntries
+                            ->pluck('id')
+                            ->all()
+                    )
+                    ->update([
+                        'status' =>
+                            'pending',
+
+                        'tracking_number' =>
+                            null,
+
+                        'error_message' =>
+                            null,
+
+                        'processed_at' =>
+                            null,
+
+                        'updated_at' =>
+                            now(),
+                    ]);
+            }
+
+            $successCount =
+                TtnBatchOrder::query()
+                    ->where(
+                        'ttn_batch_id',
+                        $batch->id
+                    )
+                    ->where(
+                        'status',
+                        'success'
+                    )
+                    ->count();
+
+            $failedCount =
+                $blockedEntries->count();
+
+            if ($retryableEntries->isNotEmpty()) {
+                $batchStatus =
+                    'pending';
+
+                $completedAt =
+                    null;
+            } else {
+                $batchStatus =
+                    'failed';
+
+                $completedAt =
+                    now();
+            }
 
             $batch->update([
-                'status' => 'pending',
-                'success_count' => $successCount,
-                'failed_count' => 0,
-                'completed_at' => null,
+                'status' =>
+                    $batchStatus,
+
+                'success_count' =>
+                    $successCount,
+
+                'failed_count' =>
+                    $failedCount,
+
+                'completed_at' =>
+                    $completedAt,
             ]);
 
-            return $failedEntries->count();
+            return [
+                'retried' =>
+                    $retryableEntries->count(),
+
+                'blocked' =>
+                    $blockedEntries->count(),
+            ];
         });
 
-        if ($retriedCount === 0) {
+        if (
+            $result['retried'] === 0 &&
+            $result['blocked'] === 0
+        ) {
             return back()->with(
                 'error',
                 'У пакеті немає замовлень з помилками.'
             );
         }
 
+        if (
+            $result['retried'] === 0 &&
+            $result['blocked'] > 0
+        ) {
+            return back()->with(
+                'error',
+                'Автоматичний повтор заблоковано для ' .
+                $result['blocked'] .
+                ' замовлень: потрібно вручну перевірити, ' .
+                'чи не була вже створена ТТН.'
+            );
+        }
+
+        $message =
+            'Повернуто до обробки замовлень: ' .
+            $result['retried'] .
+            '.';
+
+        if ($result['blocked'] > 0) {
+            $message .=
+                ' Не повторюються автоматично: ' .
+                $result['blocked'] .
+                ' — необхідна перевірка ТТН.';
+        }
+
         return back()->with(
             'success',
-            'Повернуто до обробки замовлень: ' .
-            $retriedCount . '.'
+            $message
         );
     }
 }
