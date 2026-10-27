@@ -767,6 +767,13 @@ class TestRozetkaSyncFlow extends Command
             'rozetka_status' =>
                 $rozetkaStatus,
 
+            /*
+             * The expanded API fixture returns uzdStatus=verified.
+             * Keep the locally unchanged order identical to it.
+             */
+            'uzd_status' =>
+                'verified',
+
             'delivery_type' =>
                 'DropShipping',
 
