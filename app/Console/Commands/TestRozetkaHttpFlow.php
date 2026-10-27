@@ -94,6 +94,11 @@ class TestRozetkaHttpFlow extends Command
 
             $this->newLine();
 
+            $this->info('Тест 6: перевірка статусу ЮЗД перед TTN');
+            $this->testUzdGuard();
+
+            $this->newLine();
+
             $this->info(
                 'Усі fake HTTP-тести успішно пройдено.'
             );
@@ -889,6 +894,42 @@ class TestRozetkaHttpFlow extends Command
     }
 
     /**
+     * ЮЗД без звірки: тільки GET, без confirm і TTN POST.
+     */
+    private function testUzdGuard()
+    {
+        foreach (['not_uploaded', 'problem', null] as $status) {
+            $order = $this->createTestOrder('new', null, 'UZD-' . ($status === null ? 'NULL' : $status));
+            $guid = $order->guid;
+            $supplierCode = $order->items->first()->supplier_code;
+            $calls = [];
+
+            Http::swap(new HttpFactory());
+            Http::fake(function (HttpRequest $request) use ($guid, $supplierCode, $status, &$calls) {
+                $calls[] = $request->method();
+                $this->assertTrue($request->method() === 'GET', 'За неготового ЮЗД не можна виконувати POST.');
+                $response = $this->makeOrderResponse($guid, $supplierCode, 'new', null, null);
+                $response['uzdStatus'] = $status;
+                return Http::response($response, 200);
+            });
+
+            $blocked = false;
+            try {
+                app(OrderTtnService::class)->createForOrder($order);
+            } catch (RuntimeException $e) {
+                $blocked = strpos($e->getMessage(), 'ЮЗД') !== false;
+            }
+
+            $this->assertTrue($blocked, 'Не заблоковано ТТН за ЮЗД.');
+            $this->assertTrue($calls === ['GET'], 'За неготового ЮЗД має бути тільки один GET.');
+            $order->refresh();
+            $this->assertTrue($order->uzd_status === $status, 'Не збережено uzdStatus із GET.');
+        }
+
+        $this->line('OK: ЮЗД not_uploaded/problem/null блокують усі POST.');
+    }
+
+    /**
      * Создать временный заказ.
      */
     private function createTestOrder(
@@ -985,6 +1026,9 @@ class TestRozetkaHttpFlow extends Command
 
             'orderStatus' =>
                 $status,
+
+            'uzdStatus' =>
+                'verified',
 
             'createdAt' =>
                 now()->format(
