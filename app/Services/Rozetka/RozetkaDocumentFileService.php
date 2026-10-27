@@ -112,7 +112,7 @@ class RozetkaDocumentFileService
             !is_array($parts) ||
             strtolower((string) ($parts['scheme'] ?? '')) !== 'https' ||
             !preg_match(
-                '/^content[0-9]+\\.rozetka\\.com\\.ua$/D',
+                '/^content[0-9]+\.rozetka\.com\.ua$/D',
                 strtolower((string) ($parts['host'] ?? ''))
             ) ||
             isset($parts['user']) ||
