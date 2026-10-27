@@ -11,8 +11,8 @@ class AdminBasicAuth
         $user = $_SERVER['PHP_AUTH_USER'] ?? null;
         $pass = $_SERVER['PHP_AUTH_PW'] ?? null;
 
-        $expectedUser = env('ADMIN_USER', 'admin');
-        $expectedPass = env('ADMIN_PASS', 'change_me');
+        $expectedUser = config('admin.user');
+        $expectedPass = config('admin.password');
 
         if ($user !== $expectedUser || $pass !== $expectedPass) {
             header('WWW-Authenticate: Basic realm="Admin Area"');
