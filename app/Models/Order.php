@@ -11,6 +11,7 @@ class Order extends Model {
         'comment',
         'status',
         'rozetka_status',
+        'uzd_status',
         'delivery_type',
         'cash_on_delivery',
         'delivery_company',
