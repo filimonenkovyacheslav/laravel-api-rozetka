@@ -14,3 +14,5 @@ yarn-error.log
 /storage/framework/cache/*
 /storage/framework/sessions/*
 /storage/framework/views/*
+
+/storage/framework/rozetka-api-rate-limit.lock
