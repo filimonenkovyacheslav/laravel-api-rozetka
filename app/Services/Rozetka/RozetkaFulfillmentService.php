@@ -56,6 +56,9 @@ class RozetkaFulfillmentService
                     $detail['orderStatus'];
             }
 
+            // Не разрешаем ТТН на основании ранее сохранённого verified.
+            $order->uzd_status = $detail['uzdStatus'] ?? null;
+
             if (
                 array_key_exists(
                     'orderNum',
@@ -687,6 +690,25 @@ class RozetkaFulfillmentService
     }
 
     /**
+     * Перед створенням ТТН ЮЗД має бути verified або skipped.
+     */
+    public function assertUzdReadyForTtn(Order $order)
+    {
+        $status = trim((string) $order->uzd_status);
+
+        if (in_array($status, ['verified', 'skipped'], true)) {
+            return;
+        }
+
+        throw new RuntimeException(
+            'Неможливо створити ТТН: статус ЮЗД "' .
+            ($status !== '' ? $status : 'невідомий') .
+            '". Потрібен verified у Вчасно або skipped ' .
+            'від менеджера Rozetka.'
+        );
+    }
+
+    /**
      * Создать ТТН через Rozetka.
      *
      * @param Order $order
@@ -739,6 +761,8 @@ class RozetkaFulfillmentService
                 '.'
             );
         }
+
+        $this->assertUzdReadyForTtn($order);
 
         $this->validateSerialNumbersForTtn(
             $order
