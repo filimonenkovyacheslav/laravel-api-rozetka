@@ -351,6 +351,26 @@ class RozetkaOrderService
         }
 
         /*
+         * Nova Poshta tracking details from Rozetka can change
+         * without a change to orderStatus or updatedAt.
+         */
+        if (
+            array_key_exists('trackingStatusCode', $summary) &&
+            (string) ($summary['trackingStatusCode'] ?? '') !==
+                (string) ($existingOrder->tracking_status_code ?? '')
+        ) {
+            return true;
+        }
+
+        if (
+            array_key_exists('trackingStatus', $summary) &&
+            trim((string) ($summary['trackingStatus'] ?? '')) !==
+                trim((string) ($existingOrder->tracking_status ?? ''))
+        ) {
+            return true;
+        }
+
+        /*
          * The document URL can appear after TTN creation without
          * a corresponding change in the order's updatedAt.
          */
@@ -612,13 +632,15 @@ class RozetkaOrderService
                         null;
                 }
 
-                $order->tracking_status_code =
-                    $data['trackingStatusCode']
-                    ?? null;
+                if (array_key_exists('trackingStatusCode', $data)) {
+                    $order->tracking_status_code =
+                        $data['trackingStatusCode'];
+                }
 
-                $order->tracking_status =
-                    $data['trackingStatus']
-                    ?? null;
+                if (array_key_exists('trackingStatus', $data)) {
+                    $order->tracking_status =
+                        $data['trackingStatus'];
+                }
 
                 $order->return_ttn =
                     $data['returnTtn']
