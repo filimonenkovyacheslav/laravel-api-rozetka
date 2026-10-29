@@ -235,6 +235,16 @@ class TestRozetkaMarkingsFlow extends Command
 
             $data = $request->data();
 
+            /*
+             * Yii content negotiation rejects a restricted
+             * PDF/HTML Accept header before generating markings.
+             */
+            $this->assertSame(
+                '*/*',
+                $request->header('Accept')[0] ?? null,
+                'Accept print-markings'
+            );
+
             $this->assertSame(
                 'nova_poshta',
                 $data['deliveryService']
