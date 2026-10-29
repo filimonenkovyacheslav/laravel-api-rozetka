@@ -2,6 +2,7 @@
 
 namespace App\Services\Rozetka;
 
+use App\Models\Order;
 use App\Models\TtnBatch;
 use RuntimeException;
 
@@ -16,6 +17,74 @@ class RozetkaMarkingService
         RozetkaClient $client
     ) {
         $this->client = $client;
+    }
+
+    /**
+     * Generate a PDF marking for one Rozetka order with an existing TTN.
+     * No TtnBatch record is required and no TTN is created here.
+     *
+     * @param Order $order
+     * @param string $size
+     * @return array
+     */
+    public function printOrderPdf(
+        Order $order,
+        $size = '100x100'
+    ) {
+        if (!in_array($size, ['85x85', '100x100'], true)) {
+            throw new RuntimeException(
+                'Непідтримуваний розмір маркування.'
+            );
+        }
+
+        $orderId = trim((string) $order->guid);
+        $trackingNumber = trim((string) $order->tracking_number);
+
+        if (
+            $orderId === '' ||
+            trim((string) $order->rozetka_status) === '' ||
+            $trackingNumber === '' ||
+            $order->status === 'canceled'
+        ) {
+            throw new RuntimeException(
+                'Маркування доступне лише для замовлення Rozetka ' .
+                'з наявною ТТН, яке не скасоване.'
+            );
+        }
+
+        $result = $this->client->printMarkings([
+            'deliveryService' => 'nova_poshta',
+            'format' => 'pdf',
+            'size' => $size,
+            'orders' => [$orderId],
+        ]);
+
+        $body = $result['body'] ?? '';
+        $printed = (int) ($result['printed'] ?? 0);
+        $skipped = (int) ($result['skipped'] ?? 0);
+        $contentType = strtolower(trim(
+            (string) ($result['content_type'] ?? '')
+        ));
+
+        if (
+            !is_string($body) ||
+            substr($body, 0, 5) !== '%PDF-' ||
+            strpos($contentType, 'application/pdf') !== 0 ||
+            $printed !== 1 ||
+            $skipped !== 0
+        ) {
+            throw new RuntimeException(
+                'Rozetka не повернула повний PDF маркування ' .
+                'для замовлення. Надруковано: ' .
+                $printed . ', пропущено: ' . $skipped . '.'
+            );
+        }
+
+        return [
+            'body' => $body,
+            'printed' => $printed,
+            'skipped' => $skipped,
+        ];
     }
 
     /**
