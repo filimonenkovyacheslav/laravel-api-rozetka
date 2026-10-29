@@ -495,6 +495,22 @@
                         <td class="mono align-middle">
                             {{ $order->tracking_number ?: '—' }}
 
+                            @if(
+                                !empty($order->rozetka_status) &&
+                                !empty($order->tracking_number)
+                            )
+                                <div
+                                    class="small text-muted mt-1"
+                                    style="min-width: 180px; max-width: 320px; white-space: normal;"
+                                >
+                                    <strong>Статус ТТН:</strong>
+                                    {{ $order->tracking_status ?: 'Немає даних' }}
+                                    @if($order->tracking_status_code !== null)
+                                        (код {{ $order->tracking_status_code }})
+                                    @endif
+                                </div>
+                            @endif
+
                             @if($hasFiles)
                                 <span
                                     class="badge badge-danger ml-1"

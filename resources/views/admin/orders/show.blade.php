@@ -59,7 +59,16 @@
             </div>
 
             <div class="col-md-6">
-                <div><span class="text-muted">ТТН:</span> <span class="mono">{{ $order->tracking_number }}</span></div>
+                <div><span class="text-muted">ТТН:</span> <span class="mono">{{ $order->tracking_number ?: '—' }}</span></div>
+                @if(!empty($order->rozetka_status) && !empty($order->tracking_number))
+                    <div class="mt-1">
+                        <span class="text-muted">Статус ТТН (Rozetka):</span>
+                        <span>{{ $order->tracking_status ?: 'Немає даних' }}</span>
+                        @if($order->tracking_status_code !== null)
+                            <span class="text-muted small">(код {{ $order->tracking_status_code }})</span>
+                        @endif
+                    </div>
+                @endif
                 <div><span class="text-muted">Оплата при отриманні:</span> {{ $order->cash_on_delivery }}</div>
                 <div><span class="text-muted">Created:</span> {{ optional($order->created_at)->format('d-m-Y H:i') }}</div>
                 <div><span class="text-muted">Updated:</span> {{ optional($order->updated_at)->format('d-m-Y H:i') }}</div>

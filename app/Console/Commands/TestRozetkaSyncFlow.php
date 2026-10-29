@@ -72,7 +72,15 @@ class TestRozetkaSyncFlow extends Command
             $this->newLine();
 
             $this->info(
-                'Тест 2: HTTP 429 не повторюється та не є transport error'
+                'Тест 2: trackingStatus змінився без updatedAt'
+            );
+
+            $this->testTrackingStatusOnlyChange();
+
+            $this->newLine();
+
+            $this->info(
+                'Тест 3: HTTP 429 не повторюється та не є transport error'
             );
 
             $this->test429IsNotRetried();
@@ -613,6 +621,117 @@ class TestRozetkaSyncFlow extends Command
 
         $this->line(
             'OK: незмінений заказ пропущено без запису.'
+        );
+    }
+
+    /**
+     * Tracking details may change without an orderStatus/updatedAt change.
+     * The expanded list must refresh text and code without detail GET.
+     */
+    private function testTrackingStatusOnlyChange()
+    {
+        $guid = (string) Str::uuid();
+
+        $order = $this->createExistingOrder(
+            $guid,
+            'shipping',
+            '2026-10-10 10:00:00',
+            'TRACKING-ONLY'
+        );
+
+        $order->forceFill([
+            'tracking_number' => '20400557861920',
+            'tracking_status_code' => 1,
+            'tracking_status' => 'ТТН створено',
+        ])->save();
+
+        $expanded = $this->makeExpandedOrder(
+            $guid,
+            'РОЗ-LOCAL-TRACKING-ONLY',
+            'shipping',
+            '2026-10-09 10:00:00',
+            '2026-10-10 10:00:00',
+            'LOCAL-SYNC-TRACKING-ONLY',
+            493104624
+        );
+
+        $expanded['ttn'] = '20400557861920';
+        $expanded['trackingStatusCode'] = 2;
+        $expanded['trackingStatus'] = 'Відправлення прийнято';
+
+        $calls = 0;
+
+        $this->resetHttp();
+
+        Http::fake(function (HttpRequest $request) use ($expanded, &$calls) {
+            $calls++;
+
+            $path = (string) parse_url($request->url(), PHP_URL_PATH);
+
+            $this->assertSame(
+                'GET',
+                $request->method(),
+                'tracking sync method'
+            );
+
+            $this->assertSame(
+                '/dropshipping/orders',
+                $path,
+                'tracking sync expanded list endpoint'
+            );
+
+            parse_str(
+                (string) parse_url($request->url(), PHP_URL_QUERY),
+                $query
+            );
+
+            $this->assertSame(
+                'details,products',
+                $query['expand'] ?? null,
+                'tracking sync expand'
+            );
+
+            return Http::response([
+                'totalCount' => 1,
+                'currentPage' => 1,
+                'orders' => [$expanded],
+            ], 200);
+        });
+
+        $service = app(RozetkaOrderService::class);
+
+        $result = $service->sync([
+            'dateFrom' => '2026-09-12 00:00:00',
+            'dateTo' => '2026-10-12 23:59:59',
+        ]);
+
+        $this->assertSame(1, $calls, 'tracking sync GET count');
+        $this->assertSame(1, $result['processed'], 'tracking sync processed');
+        $this->assertSame(1, $result['updated'], 'tracking sync updated');
+        $this->assertSame(0, $result['skipped'], 'tracking sync skipped');
+
+        $order->refresh();
+
+        $this->assertSame(
+            'Відправлення прийнято',
+            $order->tracking_status,
+            'trackingStatus text'
+        );
+
+        $this->assertSame(
+            2,
+            (int) $order->tracking_status_code,
+            'trackingStatusCode'
+        );
+
+        $this->assertSame(
+            '20400557861920',
+            $order->tracking_number,
+            'tracking number preserved'
+        );
+
+        $this->line(
+            'OK: текст і код ТТН оновлені без зміни updatedAt або detail GET.'
         );
     }
 
