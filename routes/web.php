@@ -7,6 +7,7 @@ use App\Http\Controllers\Admin\ProductDimensionController;
 use App\Http\Controllers\Admin\OrderFileDownloadController;
 use App\Http\Controllers\Admin\OrderExportController;
 use App\Http\Controllers\Admin\TtnBatchController;
+use App\Http\Controllers\Admin\OrderRozetkaMarkingController;
 use App\Http\Controllers\Admin\TtnAddressController;
 
 /*
@@ -23,6 +24,12 @@ Route::middleware(['web', 'admin.basic'])->prefix('admin')->name('admin.')->grou
     // Orders
     Route::get('/orders', [OrderAdminController::class, 'index'])->name('orders.index');
     Route::get('/orders/{order}', [OrderAdminController::class, 'show'])->name('orders.show');
+
+    // Download NP marking for an existing Rozetka TTN (no batch required).
+    Route::post(
+        '/orders/{order}/rozetka-marking',
+        [OrderRozetkaMarkingController::class, 'download']
+    )->name('orders.rozetka-marking');
 
     // Edit order details
     Route::get('/orders/{order}/edit', [OrderAdminController::class, 'edit'])->name('orders.edit');
@@ -87,11 +94,6 @@ Route::middleware(['web', 'admin.basic'])->prefix('admin')->name('admin.')->grou
         '/ttn-batches/{batch}',
         [TtnBatchController::class, 'show']
     )->name('ttn-batches.show');
-
-    Route::post(
-        '/ttn-batches/{batch}/rozetka-markings',
-        [TtnBatchController::class, 'printRozetkaMarkings']
-    )->name('ttn-batches.rozetka-markings');
 
     Route::post(
         '/ttn-batches/{batch}/process-next',

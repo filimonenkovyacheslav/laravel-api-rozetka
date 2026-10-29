@@ -56,6 +56,22 @@ class TestRozetkaMarkingsFlow extends Command
 
         try {
             $this->info(
+                'Тест 0: маркування одного замовлення без пакета ТТН'
+            );
+
+            $this->testSingleOrderMarking();
+
+            $this->newLine();
+
+            $this->info(
+                'Тест 0.1: замовлення без ТТН не звертається до API'
+            );
+
+            $this->testSingleOrderWithoutTtn();
+
+            $this->newLine();
+
+            $this->info(
                 'Тест 1: змішаний пакет → тільки новий Rozetka API'
             );
 
@@ -130,6 +146,118 @@ class TestRozetkaMarkingsFlow extends Command
                     $oldActionsEnabled,
             ]);
         }
+    }
+
+    /**
+     * Print one existing Rozetka order without creating a TTN batch.
+     */
+    private function testSingleOrderMarking()
+    {
+        config(['services.rozetka.actions_enabled' => true]);
+
+        $order = $this->createOrder(
+            true,
+            'shipping',
+            '20400557861920'
+        );
+
+        $calls = 0;
+        $this->resetHttp();
+
+        Http::fake(function (HttpRequest $request) use ($order, &$calls) {
+            $calls++;
+
+            $path = (string) parse_url($request->url(), PHP_URL_PATH);
+
+            $this->assertSame(
+                '/dropshipping/orders/print-markings',
+                $path,
+                'single marking endpoint'
+            );
+
+            $this->assertSame(
+                'POST',
+                $request->method(),
+                'single marking method'
+            );
+
+            $this->assertSame(
+                '*/*',
+                $request->header('Accept')[0] ?? null,
+                'single marking Accept'
+            );
+
+            $this->assertSame(
+                [
+                    'deliveryService' => 'nova_poshta',
+                    'format' => 'pdf',
+                    'size' => '100x100',
+                    'orders' => [$order->guid],
+                ],
+                $request->data(),
+                'single marking payload'
+            );
+
+            return Http::response(
+                "%PDF-1.4\nSINGLE MARKING\n",
+                200,
+                [
+                    'Content-Type' => 'application/pdf',
+                    'X-Markings-Printed' => '1',
+                    'X-Markings-Skipped' => '0',
+                ]
+            );
+        });
+
+        $result = app(RozetkaMarkingService::class)
+            ->printOrderPdf($order, '100x100');
+
+        $this->assertSame(1, $calls, 'single marking calls');
+        $this->assertSame(1, $result['printed'], 'single marking printed');
+        $this->assertSame(0, $result['skipped'], 'single marking skipped');
+        $this->assertTrue(
+            strpos($result['body'], '%PDF-') === 0,
+            'Не отримано PDF одного замовлення.'
+        );
+
+        $this->line('OK: PDF сформовано за одним orderId, без пакета.');
+    }
+
+    /**
+     * A missing TTN must fail before any HTTP request.
+     */
+    private function testSingleOrderWithoutTtn()
+    {
+        config(['services.rozetka.actions_enabled' => true]);
+
+        $order = $this->createOrder(true, 'confirmed', null);
+        $calls = 0;
+
+        $this->resetHttp();
+
+        Http::fake(function (HttpRequest $request) use (&$calls) {
+            $calls++;
+
+            throw new RuntimeException(
+                'Unexpected request for order without TTN: ' .
+                $request->url()
+            );
+        });
+
+        $caught = false;
+
+        try {
+            app(RozetkaMarkingService::class)->printOrderPdf($order);
+        } catch (RuntimeException $e) {
+            $caught = strpos(
+                $e->getMessage(),
+                'наявною ТТН'
+            ) !== false;
+        }
+
+        $this->assertTrue($caught, 'Замовлення без ТТН не заблоковане.');
+        $this->assertSame(0, $calls, 'HTTP calls without TTN');
+        $this->line('OK: без ТТН запит до API не виконується.');
     }
 
     /**

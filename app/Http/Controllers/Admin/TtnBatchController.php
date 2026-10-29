@@ -11,7 +11,6 @@ use Illuminate\Support\Facades\DB;
 use App\Services\NovaPoshta\NovaPoshtaTtnService;
 use Throwable;
 use App\Services\OrderTtnService;
-use App\Services\Rozetka\RozetkaMarkingService;
 
 class TtnBatchController extends Controller
 {
@@ -176,37 +175,7 @@ class TtnBatchController extends Controller
             },
         ]);
 
-        /*
-         * Количество записей, которые потенциально
-         * могут попасть в Rozetka print-markings.
-         *
-         * Финальную проверку всё равно выполняет
-         * RozetkaMarkingService.
-         */
-        $rozetkaMarkingsCount =
-            $batch->entries
-                ->filter(function ($entry) {
-                    return
-                        $entry->status === 'success' &&
-                        trim(
-                            (string)
-                            $entry->tracking_number
-                        ) !== '' &&
-                        $entry->order &&
-                        trim(
-                            (string)
-                            $entry->order->rozetka_status
-                        ) !== '';
-                })
-                ->count();
-
-        return view(
-            'admin.ttn-batches.show',
-            compact(
-                'batch',
-                'rozetkaMarkingsCount'
-            )
-        );
+        return view('admin.ttn-batches.show', compact('batch'));
     }
 
     /**
@@ -441,89 +410,6 @@ class TtnBatchController extends Controller
             'pending_count' => $pendingCount,
             'status' => $status,
         ];
-    }
-
-    /**
-     * Скачать PDF-маркировки Новой Почты,
-     * сформированные через Rozetka Supplier API.
-     */
-    public function printRozetkaMarkings(
-        Request $request,
-        TtnBatch $batch,
-        RozetkaMarkingService $markingService
-    ) {
-        $validated = $request->validate([
-            'size' => [
-                'nullable',
-                'in:85x85,100x100',
-            ],
-        ]);
-
-        $size =
-            $validated['size']
-            ?? '85x85';
-
-        try {
-            $result =
-                $markingService->printBatchPdf(
-                    $batch,
-                    $size
-                );
-
-            $contentDisposition = trim(
-                (string) (
-                    $result['content_disposition']
-                    ?? ''
-                )
-            );
-
-            if ($contentDisposition === '') {
-                $contentDisposition =
-                    'attachment; filename="' .
-                    'rozetka-markings-batch-' .
-                    $batch->id .
-                    '-' .
-                    $size .
-                    '.pdf"';
-            }
-
-            return response(
-                $result['body'],
-                200,
-                [
-                    'Content-Type' =>
-                        $result['content_type']
-                        ?: 'application/pdf',
-
-                    'Content-Disposition' =>
-                        $contentDisposition,
-
-                    /*
-                     * Передаём счётчики дальше,
-                     * чтобы их можно было проверить
-                     * в DevTools/автотестах.
-                     */
-                    'X-Markings-Printed' =>
-                        (string)
-                        $result['printed'],
-
-                    'X-Markings-Skipped' =>
-                        (string)
-                        $result['skipped'],
-
-                    'Cache-Control' =>
-                        'private, no-store, no-cache, must-revalidate',
-                ]
-            );
-        } catch (Throwable $e) {
-            report($e);
-
-            return back()->with(
-                'error',
-                'Не вдалося сформувати маркування Rozetka: ' .
-                $e->getMessage()
-            );
-        }
     }
 
     public function deleteNext(

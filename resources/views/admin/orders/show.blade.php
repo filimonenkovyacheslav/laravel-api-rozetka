@@ -215,7 +215,43 @@
 </div>
 
 <div class="card mb-4">
-    <div class="card-header"><strong>Files</strong></div>
+    <div class="card-header d-flex align-items-center justify-content-between flex-wrap">
+        <strong>Файли накладних</strong>
+
+        @if(
+            !empty($order->rozetka_status) &&
+            !empty($order->tracking_number) &&
+            $order->status !== 'canceled'
+        )
+            <form
+                method="post"
+                action="{{ route('admin.orders.rozetka-marking', $order) }}"
+                class="form-inline my-1"
+            >
+                @csrf
+                <label for="marking-size-{{ $order->id }}" class="mr-2 mb-0">
+                    Маркування НП
+                </label>
+                <select
+                    name="size"
+                    id="marking-size-{{ $order->id }}"
+                    class="form-control form-control-sm mr-2"
+                >
+                    <option value="100x100">100 × 100 мм</option>
+                    <option value="85x85">85 × 85 мм</option>
+                </select>
+                <button
+                    type="submit"
+                    class="btn btn-sm btn-outline-primary"
+                    @if(!config('services.rozetka.actions_enabled', false))
+                        disabled
+                    @endif
+                >
+                    Завантажити PDF маркування
+                </button>
+            </form>
+        @endif
+    </div>
     <div class="table-responsive">
         <table class="table table-sm mb-0">
             <thead class="thead-light">
