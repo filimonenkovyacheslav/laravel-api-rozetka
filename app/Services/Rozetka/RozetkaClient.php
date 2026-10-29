@@ -449,8 +449,13 @@ class RozetkaClient
              */
             $response = Http::withToken($this->token)
                 ->withHeaders([
+                    /*
+                     * Rozetka Supplier API uses Yii content negotiation.
+                     * It can reject PDF/HTML-only Accept with HTTP 406
+                     * before the marking endpoint generates the PDF.
+                     */
                     'Accept' =>
-                        'application/pdf, text/html',
+                        '*/*',
                 ])
                 ->asJson()
                 ->timeout($this->timeout)
