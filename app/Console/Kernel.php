@@ -97,10 +97,10 @@ class Kernel extends ConsoleKernel
          * The command itself also checks both auto-TTN and actions
          * flags and records every attempted order durably.
          */
-        $autoTtnOptions = [
-            '--execute' => true,
-            '--limit' => 20,
-        ];
+        // Pass boolean --execute as a bare CLI flag, not as
+        // ['--execute' => true]: Laravel's scheduler can serialize
+        // the latter as --execute=1, which Symfony Console rejects.
+        $autoTtnCommand = 'rozetka:auto-ttn --execute --limit=20';
 
         $canaryOrderId = (int) config(
             'services.rozetka.auto_ttn_only_order_id',
@@ -108,10 +108,10 @@ class Kernel extends ConsoleKernel
         );
 
         if ($canaryOrderId > 0) {
-            $autoTtnOptions['--order-id'] = (string) $canaryOrderId;
+            $autoTtnCommand .= ' --order-id=' . $canaryOrderId;
         }
 
-        $schedule->command('rozetka:auto-ttn', $autoTtnOptions)
+        $schedule->command($autoTtnCommand)
             ->everyTenMinutes()
             ->withoutOverlapping(30)
             ->appendOutputTo(storage_path('logs/rozetka-auto-ttn.log'))
