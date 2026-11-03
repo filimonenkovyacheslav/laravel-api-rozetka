@@ -89,72 +89,17 @@ class OrderTtnService
         );
 
         /*
-         * Новый или изменённый заказ
-         * сначала подтверждаем.
+         * Only the explicit "Підтвердити всю кількість" action
+         * may confirm a new/updated Rozetka order.
+         * Creating a TTN must never silently perform POST /confirm.
          */
-        if (
-            in_array(
-                $status,
-                [
-                    'new',
-                    'updated',
-                ],
-                true
-            )
-        ) {
-            try {
-                $this->rozetkaService
-                    ->confirmOrder($order);
-
-                $order->refresh();
-                $order->load('items');
-            } catch (Throwable $confirmException) {
-                /*
-                 * Возможно сервер успел выполнить confirm,
-                 * но ответ до нас не дошёл.
-                 *
-                 * Проверяем фактическое состояние.
-                 */
-                try {
-                    $order = $this->rozetkaService
-                        ->refreshFromApi($order);
-                } catch (Throwable $refreshException) {
-                    report($refreshException);
-
-                    throw $confirmException;
-                }
-
-                $statusAfterError = trim(
-                    (string) $order->rozetka_status
-                );
-
-                /*
-                 * Если Rozetka уже перевела заказ дальше,
-                 * повторный confirm не нужен.
-                 */
-                if (
-                    !in_array(
-                        $statusAfterError,
-                        [
-                            'confirmed',
-                            'shipping',
-                            'problem',
-                        ],
-                        true
-                    )
-                ) {
-                    throw $confirmException;
-                }
-            }
+        if (in_array($status, ['new', 'updated'], true)) {
+            throw new RuntimeException(
+                'Спочатку зарезервуйте потрібну кількість і натисніть ' .
+                '«Підтвердити всю кількість» у замовленні. ' .
+                'Автоматичне підтвердження під час створення ТТН вимкнено.'
+            );
         }
-
-        /*
-         * После confirm ещё раз используем
-         * фактический локальный статус.
-         */
-        $status = trim(
-            (string) $order->rozetka_status
-        );
 
         if (
             !in_array(
@@ -184,8 +129,8 @@ class OrderTtnService
             );
         }
 
-        // ЮЗД перевіряємо лише перед створенням ТТН,
-        // не блокуючи підтвердження нового замовлення.
+        // ЮЗД перевіряємо лише перед створенням ТТН.
+        // Окреме ручне підтвердження кількостей не блокуємо.
         $this->rozetkaService->assertUzdReadyForTtn($order);
 
         try {
