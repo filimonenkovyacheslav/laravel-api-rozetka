@@ -6,6 +6,7 @@ use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\ProductDimension;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Cache;
 use RuntimeException;
 
 class RozetkaFulfillmentService
@@ -511,6 +512,27 @@ class RozetkaFulfillmentService
     {
         $this->ensureActionsEnabled();
 
+        /*
+         * Prevent two concurrent clicks from issuing duplicate
+         * POST /confirm requests for the same order.
+         */
+        $lock = Cache::lock('rozetka-confirm-all-' . $order->id, 180);
+
+        if (!$lock->get()) {
+            throw new RuntimeException(
+                'Підтвердження цього замовлення вже виконується.'
+            );
+        }
+
+        try {
+            return $this->confirmFullOrderLocked($order);
+        } finally {
+            $lock->release();
+        }
+    }
+
+    private function confirmFullOrderLocked(Order $order)
+    {
         $order = $this->refreshFromApi($order);
 
         if (
