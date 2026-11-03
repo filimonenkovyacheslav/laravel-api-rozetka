@@ -774,6 +774,23 @@ class RozetkaOrderService
             $isNewItem =
                 !$item;
 
+            /*
+             * Keep a manager's locally staged reservation across the
+             * scheduled Rozetka sync. The staging differs from the last
+             * remote confirmed quantity (or ordered quantity before
+             * the first confirmation).
+             */
+            $hadLocalReservationDraft = false;
+
+            if (!$isNewItem && $item->reserved_quantity !== null) {
+                $previousBaseline = $item->confirmed_quantity !== null
+                    ? (int) $item->confirmed_quantity
+                    : (int) $item->quantity;
+
+                $hadLocalReservationDraft =
+                    (int) $item->reserved_quantity !== $previousBaseline;
+            }
+
             if (!$item) {
                 $item =
                     new OrderItem();
@@ -820,57 +837,46 @@ class RozetkaOrderService
                 $quantity;
 
             /*
-             * confirmedQuantity может быть null
-             * до подтверждения заказа.
+             * Remote confirmedQuantity and local reserved_quantity
+             * have different purposes:
+             * - confirmed_quantity: authoritative value from Rozetka;
+             * - reserved_quantity: locally staged value to send with
+             *   the order-wide "Підтвердити всю кількість" action.
+             *
+             * Never overwrite a staged local change during sync.
+             * For new products, default the reservation to the
+             * full ordered quantity.
              */
-            if (
-                array_key_exists(
-                    'confirmedQuantity',
-                    $product
-                )
-            ) {
+            if (array_key_exists('confirmedQuantity', $product)) {
                 $item->confirmed_quantity =
-                    $product[
-                        'confirmedQuantity'
-                    ] !== null
-                        ? (int)
-                            $product[
-                                'confirmedQuantity'
-                            ]
+                    $product['confirmedQuantity'] !== null
+                        ? (int) $product['confirmedQuantity']
                         : null;
 
-                /*
-                 * Для совместимости со старым UI:
-                 * если Rozetka уже вернула
-                 * confirmedQuantity, показываем
-                 * её также как reserved_quantity.
-                 */
-                if (
-                    $product[
-                        'confirmedQuantity'
-                    ] !== null
-                ) {
+                if (!$hadLocalReservationDraft) {
+                    // New/updated orders default to the full ordered
+                    // quantity until the manager explicitly reserves less.
+                    // Confirmed orders keep the remotely accepted quantity
+                    // as their baseline for later amendments.
                     $item->reserved_quantity =
-                        (int)
-                            $product[
-                                'confirmedQuantity'
-                            ];
-                } elseif ($isNewItem) {
-                    /*
-                     * Для нового неподтверждённого
-                     * заказа по умолчанию считаем,
-                     * что менеджер планирует
-                     * подтвердить всё количество.
-                     */
-                    $item->reserved_quantity =
-                        $quantity;
+                        in_array(
+                            (string) $order->rozetka_status,
+                            ['new', 'updated'],
+                            true
+                        )
+                            ? $quantity
+                            : ($item->confirmed_quantity !== null
+                                ? (int) $item->confirmed_quantity
+                                : $quantity);
                 }
             } elseif ($isNewItem) {
-                $item->confirmed_quantity =
-                    null;
-
-                $item->reserved_quantity =
-                    $quantity;
+                $item->confirmed_quantity = null;
+                $item->reserved_quantity = $quantity;
+            } elseif (
+                !$hadLocalReservationDraft &&
+                $item->confirmed_quantity === null
+            ) {
+                $item->reserved_quantity = $quantity;
             }
 
             /*

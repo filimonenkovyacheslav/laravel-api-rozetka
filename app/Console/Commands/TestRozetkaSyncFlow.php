@@ -80,7 +80,15 @@ class TestRozetkaSyncFlow extends Command
             $this->newLine();
 
             $this->info(
-                'Тест 3: HTTP 429 не повторюється та не є transport error'
+                'Тест 3: локально зарезервована кількість зберігається під час sync'
+            );
+
+            $this->testKeepStagedReservation();
+
+            $this->newLine();
+
+            $this->info(
+                'Тест 4: HTTP 429 не повторюється та не є transport error'
             );
 
             $this->test429IsNotRetried();
@@ -850,6 +858,120 @@ class TestRozetkaSyncFlow extends Command
         $this->line(
             'OK: 429 не викликав автоматичного retry.'
         );
+    }
+
+    /**
+     * The scheduler must not silently discard a manager's
+     * reservation before the order-level confirmation is sent.
+     */
+    private function testKeepStagedReservation()
+    {
+        $order = $this->createExistingOrder(
+            (string) Str::uuid(),
+            'new',
+            '2026-10-10 10:00:00',
+            'STAGED-RESERVATION'
+        );
+
+        $item = $order->items->first();
+        $item->update([
+            'quantity' => 5,
+            'confirmed_quantity' => null,
+            'reserved_quantity' => 2,
+        ]);
+
+        $product = [
+            'supplierCode' => $item->supplier_code,
+            'rzCode' => 493104624,
+            'quantity' => 5,
+            'confirmedQuantity' => null,
+            'serialNumbers' => [],
+        ];
+
+        $syncItems = new \ReflectionMethod(
+            RozetkaOrderService::class,
+            'syncItems'
+        );
+        $syncItems->setAccessible(true);
+
+        $syncItems->invoke(
+            app(RozetkaOrderService::class),
+            $order,
+            [$product]
+        );
+
+        $item->refresh();
+
+        $this->assertSame(
+            2,
+            (int) $item->reserved_quantity,
+            'Синхронізація стерла локально зарезервовану кількість.'
+        );
+
+        // In confirmed status, remote value still differs from draft.
+        $item->update([
+            'confirmed_quantity' => 3,
+            'reserved_quantity' => 2,
+        ]);
+        $product['confirmedQuantity'] = 3;
+
+        $syncItems->invoke(
+            app(RozetkaOrderService::class),
+            $order,
+            [$product]
+        );
+
+        $item->refresh();
+
+        $this->assertSame(
+            2,
+            (int) $item->reserved_quantity,
+            'Чернетка кількості втрачена у confirmed.'
+        );
+
+        // With no pending draft, confirmed orders adopt remote changes.
+        $order->update(['rozetka_status' => 'confirmed']);
+        $item->update(['reserved_quantity' => 3]);
+        $product['confirmedQuantity'] = 4;
+
+        $syncItems->invoke(
+            app(RozetkaOrderService::class),
+            $order,
+            [$product]
+        );
+
+        $item->refresh();
+
+        $this->assertSame(
+            4,
+            (int) $item->confirmed_quantity,
+            'Не оновлено confirmedQuantity з API.'
+        );
+        $this->assertSame(
+            4,
+            (int) $item->reserved_quantity,
+            'Не оновлено резерв без локальних змін.'
+        );
+
+        // An updated order should default to its full ordered quantity.
+        $order->update(['rozetka_status' => 'updated']);
+        $product['confirmedQuantity'] = 4;
+
+        $syncItems->invoke(
+            app(RozetkaOrderService::class),
+            $order,
+            [$product]
+        );
+
+        $item->refresh();
+
+        $this->assertSame(
+            5,
+            (int) $item->reserved_quantity,
+            'Для updated замовлення резерв за замовчуванням повинен дорівнювати замовленому.'
+        );
+
+        $this->line('OK: чернетки зберігаються, new/updated за замовчуванням резервують всю кількість.');
     }
 
     /**

@@ -1,7 +1,7 @@
 @extends('admin.layout')
 
-@section('title', 'Підтвердження кількості')
-@section('header', 'Підтвердження кількості')
+@section('title', 'Резервування товару')
+@section('header', 'Резервування товару')
 
 @section('content')
 <div class="mb-3">
@@ -20,19 +20,18 @@
         <form method="post" action="{{ route('admin.items.update', $item->id) }}">
             @csrf
             <div class="form-group">
-                <label>Підтверджена к-сть</label>
-                <input type="number" name="reserved_quantity" min="0" max="{{ $item->quantity }}" step="1" class="form-control" value="{{ old('reserved_quantity', !empty($order->rozetka_status) ? ($item->confirmed_quantity ?? $item->reserved_quantity) : $item->reserved_quantity) }}" required>
+                <label>Зарезервована к-сть</label>
+                <input type="number" name="reserved_quantity" min="0" max="{{ $item->quantity }}" step="1" class="form-control" value="{{ old('reserved_quantity', $item->reserved_quantity ?? $item->quantity) }}" required>
             </div>
             @if(!empty($order->rozetka_status))
                 <div class="small text-muted mb-3">
-                    Підтвердження відправляється до Rozetka для всіх товарів замовлення:
-                    для цієї позиції — обрана кількість, для інших — раніше підтверджена
-                    або запланована кількість. Якщо кількість менша за замовлену, Rozetka
-                    підтвердить замовлення з попередженням, але створення ТТН буде
-                    недоступним до повного підтвердження. Зміна кількості скидає серійні номери.
+                    Тут кількість лише резервується локально. Жодного запиту до Rozetka
+                    ця кнопка не надсилає. Щоб підтвердити всі зарезервовані
+                    кількості в API, поверніться до замовлення й натисніть
+                    «Підтвердити всю кількість».
                 </div>
             @endif
-            <button class="btn btn-primary">Підтвердити</button>
+            <button class="btn btn-primary">Зарезервувати</button>
         </form>
     </div>
 </div>

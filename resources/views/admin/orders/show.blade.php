@@ -43,7 +43,8 @@
   $needsFullConfirmation = $order->items->contains(function ($item) use ($isRozetkaOrder) {
       if ($isRozetkaOrder) {
           return $item->confirmed_quantity === null ||
-              (int) $item->confirmed_quantity !== (int) $item->quantity;
+              (int) $item->confirmed_quantity !==
+                  (int) ($item->reserved_quantity ?? $item->quantity);
       }
       return (int) $item->reserved_quantity !== (int) $item->quantity;
   });
@@ -199,14 +200,14 @@
     <div class="card-header d-flex align-items-center justify-content-between flex-wrap">
         <div>
             <strong>Товари</strong>
-            <span class="text-muted ml-2">(редагується кількість для підтвердження)</span>
+            <span class="text-muted ml-2">(спочатку резервуємо, потім підтверджуємо замовлення)</span>
         </div>
         @if($showConfirmAll)
             <form
                 method="post"
                 action="{{ route('admin.orders.confirm-all', $order) }}"
                 class="my-1"
-                onsubmit="return confirm('Підтвердити всю замовлену кількість товарів{{ $isRozetkaOrder ? ' у Rozetka' : '' }}?');"
+                onsubmit="return confirm('Підтвердити зарезервовану кількість усіх товарів{{ $isRozetkaOrder ? ' у Rozetka' : '' }}?');"
             >
                 @csrf
                 <button
@@ -227,7 +228,7 @@
                 <th>Артикул (RZ)</th>
                 <th>Посилання (RZ)</th>
                 <th>Замовлена к-сть</th>
-                <th>Підтверджена к-сть</th>
+                <th>Зарезервована к-сть</th>
                 <th>Ціна</th>
                 <th></th>
             </tr>
@@ -240,9 +241,9 @@
                     <td class="mono"><a href="https://rozetka.com.ua/{{ $it->rz_code }}/p{{ $it->rz_code }}/" target= _blank >{{ $it->rz_code }}</a></td>
                     <td>{{ $it->quantity }}</td>
                     <td>
-                        <strong>{{ $isRozetkaOrder ? ($it->confirmed_quantity ?? '—') : ($it->reserved_quantity ?? '—') }}</strong>
-                        @if($isRozetkaOrder && $canEditQuantities && $it->reserved_quantity !== null)
-                            <div class="small text-muted">Заплановано: {{ $it->reserved_quantity }}</div>
+                        <strong>{{ $it->reserved_quantity ?? $it->quantity }}</strong>
+                        @if($isRozetkaOrder)
+                            <div class="small text-muted">Підтверджено Rozetka: {{ $it->confirmed_quantity ?? '—' }}</div>
                         @endif
                     </td>
                     <td>
@@ -261,7 +262,7 @@
                     </td>
                     <td class="text-right">
                         @if($canEditQuantities && $order->status !== 'canceled')
-                            <a class="btn btn-sm btn-outline-primary" href="{{ route('admin.items.edit', $it->id) }}">Підтвердити</a>
+                            <a class="btn btn-sm btn-outline-primary" href="{{ route('admin.items.edit', $it->id) }}">Зарезервувати</a>
                         @endif
                     </td>
                 </tr>

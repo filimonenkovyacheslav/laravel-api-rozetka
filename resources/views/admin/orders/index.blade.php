@@ -452,7 +452,8 @@
                         $needsFullConfirmation = $order->items->contains(function ($item) use ($isRozetkaOrder) {
                             if ($isRozetkaOrder) {
                                 return $item->confirmed_quantity === null ||
-                                    (int) $item->confirmed_quantity !== (int) $item->quantity;
+                                    (int) $item->confirmed_quantity !==
+                                        (int) ($item->reserved_quantity ?? $item->quantity);
                             }
                             return (int) $item->reserved_quantity !== (int) $item->quantity;
                         });
@@ -616,6 +617,24 @@
                                 <span class="toggle-icon">▼</span>
                                 Коротко
                             </button>
+
+                            @if($showConfirmAll)
+                                <form
+                                    method="post"
+                                    action="{{ route('admin.orders.confirm-all', $order) }}"
+                                    class="my-1"
+                                    onsubmit="return confirm('Підтвердити зарезервовану кількість усіх товарів{{ $isRozetkaOrder ? ' у Rozetka' : '' }}?');"
+                                >
+                                    @csrf
+                                    <button
+                                        type="submit"
+                                        class="btn btn-sm btn-success"
+                                        @if($isRozetkaOrder && !config('services.rozetka.actions_enabled', false)) disabled @endif
+                                    >
+                                        Підтвердити всю кількість
+                                    </button>
+                                </form>
+                            @endif
                             
                         </td>
                     </tr>
@@ -634,23 +653,6 @@
                                         </span>
                                     </div>
 
-                                    @if($showConfirmAll)
-                                        <form
-                                            method="post"
-                                            action="{{ route('admin.orders.confirm-all', $order) }}"
-                                            class="my-1"
-                                            onsubmit="return confirm('Підтвердити всю замовлену кількість товарів{{ $isRozetkaOrder ? ' у Rozetka' : '' }}?');"
-                                        >
-                                            @csrf
-                                            <button
-                                                type="submit"
-                                                class="btn btn-sm btn-success"
-                                                @if($isRozetkaOrder && !config('services.rozetka.actions_enabled', false)) disabled @endif
-                                            >
-                                                Підтвердити всю кількість
-                                            </button>
-                                        </form>
-                                    @endif
                                 </div>
 
                                 @if($order->items->isEmpty())
@@ -671,7 +673,7 @@
                                                         Кількість
                                                     </th>
                                                     <th class="text-right">
-                                                        Підтверджене
+                                                        Зарезервовано
                                                     </th>
                                                     <th class="text-right">
                                                         Ціна
@@ -679,9 +681,7 @@
                                                     <th class="text-right">
                                                         Сума
                                                     </th>
-                                                    <th class="text-right">
-                                                        Дія
-                                                    </th>
+
                                                 </tr>
                                             </thead>
 
@@ -752,19 +752,16 @@
                                                             );
                                                         }
 
-                                                        $reservedQuantity = $isRozetkaOrder
-                                                            ? $item->confirmed_quantity
-                                                            : data_get($item, 'reservedQuantity');
+                                                        $reservedQuantity = data_get(
+                                                            $item,
+                                                            'reserved_quantity'
+                                                        );
 
-                                                        if (!$isRozetkaOrder && (
+                                                        if (
                                                             $reservedQuantity === null
                                                             || $reservedQuantity === ''
-                                                        )) {
-                                                            $reservedQuantity = data_get(
-                                                                $item,
-                                                                'reserved_quantity',
-                                                                0
-                                                            );
+                                                        ) {
+                                                            $reservedQuantity = $quantity;
                                                         }
 
                                                         $price = data_get(
@@ -821,8 +818,13 @@
 
                                                         <td class="text-right">
                                                             <strong>
-                                                                {{ $reservedQuantity ?? '—' }}
+                                                                {{ $reservedQuantity }}
                                                             </strong>
+                                                            @if($isRozetkaOrder)
+                                                                <div class="small text-muted">
+                                                                    У Rozetka: {{ $item->confirmed_quantity ?? '—' }}
+                                                                </div>
+                                                            @endif
                                                         </td>
 
                                                         <td class="text-right">
@@ -852,16 +854,6 @@
                                                                 }}
                                                             @else
                                                                 <span class="text-muted">—</span>
-                                                            @endif
-                                                        </td>
-                                                        <td class="text-right">
-                                                            @if($canEditQuantities && $order->status !== 'canceled')
-                                                                <a
-                                                                    href="{{ route('admin.items.edit', $item->id) }}"
-                                                                    class="btn btn-sm btn-outline-primary"
-                                                                >
-                                                                    Підтвердити
-                                                                </a>
                                                             @endif
                                                         </td>
                                                     </tr>

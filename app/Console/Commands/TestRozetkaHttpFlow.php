@@ -1073,8 +1073,7 @@ class TestRozetkaHttpFlow extends Command
         $guid = $order->guid;
         $supplierCode = $order->items->first()->supplier_code;
 
-        // Existing manual planned quantity must be overridden to full.
-        $order->items->first()->update(['reserved_quantity' => 0]);
+        // Default reservation equals the ordered quantity.
 
         $calls = [];
         $getCount = 0;
@@ -1138,12 +1137,14 @@ class TestRozetkaHttpFlow extends Command
 
         $service = app(\App\Services\Rozetka\RozetkaFulfillmentService::class);
 
-        $confirmed = $service->confirmFullOrder($order);
+        $firstResult = $service->confirmFullOrder($order);
+        $confirmed = $firstResult['order'];
 
         $this->assertTrue(
+            $firstResult['performed'] === true &&
             $confirmed->rozetka_status === 'confirmed' &&
             (int) $confirmed->items->first()->confirmed_quantity === 1,
-            'Повна кількість не підтвердилась через Rozetka.'
+            'Кількість за замовчуванням не підтвердилась через Rozetka.'
         );
 
         $secondResult = $service->confirmFullOrder($confirmed);
@@ -1319,11 +1320,16 @@ class TestRozetkaHttpFlow extends Command
 
         $service = app(\App\Services\Rozetka\RozetkaFulfillmentService::class);
 
-        $partial = $service->confirmItemQuantity(
-            $order,
-            $first->id,
-            0
+        // Individual "Зарезервувати": save only a local draft.
+        $first->update(['reserved_quantity' => 0]);
+
+        $this->assertTrue(
+            $posts === 0,
+            'Резервування однієї позиції не повинно робити POST.'
         );
+
+        // Only the order-wide button sends all staged quantities.
+        $partial = $service->confirmFullOrder($order);
 
         $this->assertTrue(
             $partial['performed'] === true &&
@@ -1363,11 +1369,13 @@ class TestRozetkaHttpFlow extends Command
         $remoteSerials[$secondCode] = ['SN-001', 'SN-002'];
 
         // A second partial change in confirmed should return two warnings.
-        $partialAgain = $service->confirmItemQuantity(
-            $partial['order'],
-            $second->id,
-            1
+        $second->update(['reserved_quantity' => 1]);
+        $this->assertTrue(
+            $posts === 1,
+            'Індивідуальне резервування не повинно додавати POST.'
         );
+
+        $partialAgain = $service->confirmFullOrder($partial['order']);
 
         $this->assertTrue(
             $partialAgain['performed'] === true &&
@@ -1388,6 +1396,10 @@ class TestRozetkaHttpFlow extends Command
             ) === [],
             'Зміна кількості має скидати наявні серійні номери.'
         );
+
+        // Restore each staged quantity to the full ordered amount.
+        $first->update(['reserved_quantity' => 1]);
+        $second->update(['reserved_quantity' => 2]);
 
         // Even confirmed orders allow quantity changes before TTN.
         $full = $service->confirmFullOrder($partialAgain['order']);
@@ -1429,7 +1441,7 @@ class TestRozetkaHttpFlow extends Command
         $blocked = false;
 
         try {
-            $service->confirmItemQuantity($updated['order'], $first->id, 0);
+            $service->confirmFullOrder($updated['order']);
         } catch (RuntimeException $e) {
             $blocked = strpos($e->getMessage(), 'new, updated та confirmed') !== false;
         }
