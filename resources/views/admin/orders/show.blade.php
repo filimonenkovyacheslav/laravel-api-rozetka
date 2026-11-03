@@ -50,7 +50,7 @@
   $showConfirmAll = $order->items->isNotEmpty() &&
       $order->status !== 'canceled' &&
       $canEditQuantities &&
-      $needsFullConfirmation;
+      ($isRozetkaOrder || $needsFullConfirmation);
 @endphp
 
 <div class="card mb-3">
