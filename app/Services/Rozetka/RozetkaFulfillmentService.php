@@ -323,10 +323,25 @@ class RozetkaFulfillmentService
                 );
 
             /*
-             * Если заказ требует SN, количество серийников
-             * должно совпадать с подтверждаемым количеством.
+             * Rozetka clears serial numbers when confirmedQuantity
+             * changes. Do not submit stale serial numbers with the
+             * new quantity. A subsequent serial-number operation
+             * can supply new values if they are required.
+             */
+            $quantityChanged =
+                $item->confirmed_quantity !== null &&
+                (int) $item->confirmed_quantity !== $confirmedQuantity;
+
+            if ($quantityChanged) {
+                $serialNumbers = [];
+            }
+
+            /*
+             * When the quantity did not change, keep the existing
+             * serial-number consistency validation.
              */
             if (
+                !$quantityChanged &&
                 $order->sn_required &&
                 count($serialNumbers) !==
                     $confirmedQuantity
@@ -347,6 +362,7 @@ class RozetkaFulfillmentService
              * неконсистентный payload.
              */
             if (
+                !$quantityChanged &&
                 !empty($serialNumbers) &&
                 count($serialNumbers) !==
                     $confirmedQuantity
@@ -460,6 +476,8 @@ class RozetkaFulfillmentService
                         $product
                     )
                 ) {
+                    $previousQuantity = $item->confirmed_quantity;
+
                     $item->confirmed_quantity =
                         $product['confirmedQuantity'] !== null
                             ? (int)
@@ -468,6 +486,15 @@ class RozetkaFulfillmentService
 
                     $item->reserved_quantity =
                         $item->confirmed_quantity;
+
+                    if (
+                        $previousQuantity !== null &&
+                        $item->confirmed_quantity !== null &&
+                        (int) $previousQuantity !== (int) $item->confirmed_quantity
+                    ) {
+                        // Rozetka drops SN when confirmed quantity changes.
+                        $item->serial_number = json_encode([]);
+                    }
                 }
 
                 if (
@@ -500,22 +527,44 @@ class RozetkaFulfillmentService
     }
 
     /**
-     * Confirm every ordered item in the actual Rozetka API.
-     *
-     * This is an order-level POST; individual quantity editing only
-     * stages values locally until this action.
-     *
-     * Always GET first: the order may have been confirmed by another
-     * operator. Never repeat a confirm for a completed order.
+     * Confirm all quantities via Rozetka, including re-confirmation
+     * of a partially confirmed order in "confirmed" status.
      */
     public function confirmFullOrder(Order $order)
     {
+        return $this->confirmQuantities($order, [], true);
+    }
+
+    /**
+     * Confirm a selected quantity for one product while including
+     * all other products in the same API request.
+     */
+    public function confirmItemQuantity(
+        Order $order,
+        $itemId,
+        $quantity
+    ) {
+        return $this->confirmQuantities(
+            $order,
+            [(int) $itemId => (int) $quantity],
+            false
+        );
+    }
+
+    /**
+     * The API requires a complete products payload, and a partial
+     * confirmedQuantity is a successful confirmation with warnings.
+     *
+     * @return array with order, warnings, partial, performed
+     */
+    private function confirmQuantities(
+        Order $order,
+        array $overrides,
+        $full
+    ) {
         $this->ensureActionsEnabled();
 
-        /*
-         * Prevent two concurrent clicks from issuing duplicate
-         * POST /confirm requests for the same order.
-         */
+        // One lock for full and per-product confirmation.
         $lock = Cache::lock('rozetka-confirm-all-' . $order->id, 180);
 
         if (!$lock->get()) {
@@ -525,27 +574,33 @@ class RozetkaFulfillmentService
         }
 
         try {
-            return $this->confirmFullOrderLocked($order);
+            return $this->confirmQuantitiesLocked(
+                $order,
+                $overrides,
+                $full
+            );
         } finally {
             $lock->release();
         }
     }
 
-    private function confirmFullOrderLocked(Order $order)
-    {
+    private function confirmQuantitiesLocked(
+        Order $order,
+        array $overrides,
+        $full
+    ) {
+        // Always check the remote order before sending a POST.
         $order = $this->refreshFromApi($order);
 
+        $status = trim((string) $order->rozetka_status);
+
         if (
-            !in_array(
-                trim((string) $order->rozetka_status),
-                ['new', 'updated'],
-                true
-            ) ||
+            !in_array($status, ['new', 'updated', 'confirmed'], true) ||
             trim((string) $order->tracking_number) !== ''
         ) {
             throw new RuntimeException(
-                'Замовлення вже підтверджене або його статус ' .
-                'не дозволяє підтвердження.'
+                'Зміна кількості дозволена лише в статусах ' .
+                'new, updated та confirmed до створення ТТН.'
             );
         }
 
@@ -553,52 +608,111 @@ class RozetkaFulfillmentService
             throw new RuntimeException('У замовленні немає товарів.');
         }
 
-        foreach ($order->items as $item) {
-            $quantity = (int) $item->quantity;
+        $requestedItemFound = $full;
 
-            if ($quantity < 1) {
+        foreach ($order->items as $item) {
+            $itemId = (int) $item->id;
+            $ordered = (int) $item->quantity;
+
+            if ($ordered < 1) {
                 throw new RuntimeException(
-                    'Неможливо підтвердити некоректну кількість товару ' .
-                    $item->supplier_code . '.'
+                    'Некоректна замовлена кількість: ' . $item->supplier_code
                 );
             }
 
-            /*
-             * Override only the in-memory values used by
-             * buildConfirmPayload; never persist an unconfirmed
-             * quantity before the remote API confirms it.
-             */
-            $item->reserved_quantity = $quantity;
+            if ($full) {
+                $value = $ordered;
+            } elseif (array_key_exists($itemId, $overrides)) {
+                $requestedItemFound = true;
+                $value = $overrides[$itemId];
+            } else {
+                // Preserve all other products' current confirmed values.
+                $value = $item->confirmed_quantity !== null
+                    ? (int) $item->confirmed_quantity
+                    : ($item->reserved_quantity !== null
+                        ? (int) $item->reserved_quantity
+                        : $ordered);
+            }
+
+            if ($value < 0 || $value > $ordered) {
+                throw new RuntimeException(
+                    'Кількість товару ' . $item->supplier_code .
+                    ' має бути від 0 до ' . $ordered . '.'
+                );
+            }
+
+            // In-memory only, never persist an unconfirmed quantity.
+            $item->reserved_quantity = $value;
         }
 
-        $this->confirmOrder($order);
+        if (!$requestedItemFound) {
+            throw new RuntimeException(
+                'Товар не належить цьому замовленню.'
+            );
+        }
+
+        // Avoid a redundant POST only for an already confirmed order
+        // when every quantity is unchanged. new/updated require POST.
+        $unchanged = $order->items->every(function ($item) {
+            return $item->confirmed_quantity !== null &&
+                (int) $item->confirmed_quantity ===
+                (int) $item->reserved_quantity;
+        });
+
+        if ($status === 'confirmed' && $unchanged) {
+            $partial = $order->items->contains(function ($item) {
+                return $item->confirmed_quantity === null ||
+                    (int) $item->confirmed_quantity !== (int) $item->quantity;
+            });
+
+            return [
+                'order' => $order,
+                'warnings' => [],
+                'partial' => $partial,
+                'performed' => false,
+            ];
+        }
+
+        $response = $this->confirmOrder($order);
 
         /*
-         * Read the accepted result from Rozetka, rather than
-         * assuming the POST response contains every product.
+         * 200 with warnings means successful partial confirmation,
+         * NOT an API error. Preserve the warnings for the UI.
          */
+        $warnings = is_array($response['warnings'] ?? null)
+            ? $response['warnings']
+            : [];
+
+        // The POST may have succeeded even if this GET fails.
+        // Never blindly repeat the POST on an uncertain outcome.
         $order = $this->refreshFromApi($order);
 
         if ((string) $order->rozetka_status !== 'confirmed') {
             throw new RuntimeException(
-                'Rozetka не підтвердила замовлення: ' .
-                ($order->rozetka_status ?: 'статус відсутній') . '.'
+                'Rozetka повернула неочікуваний статус після ' .
+                'підтвердження: ' . ($order->rozetka_status ?: 'невідомий') . '.'
             );
         }
 
         foreach ($order->items as $item) {
-            if (
-                $item->confirmed_quantity === null ||
-                (int) $item->confirmed_quantity !== (int) $item->quantity
-            ) {
+            if ($item->confirmed_quantity === null) {
                 throw new RuntimeException(
-                    'Rozetka не підтвердила всю кількість товару ' .
-                    $item->supplier_code . '.'
+                    'Rozetka не повернула підтверджену кількість ' .
+                    'для товару ' . $item->supplier_code . '.'
                 );
             }
         }
 
-        return $order;
+        $partial = $order->items->contains(function ($item) {
+            return (int) $item->confirmed_quantity !== (int) $item->quantity;
+        });
+
+        return [
+            'order' => $order,
+            'warnings' => $warnings,
+            'partial' => $partial,
+            'performed' => true,
+        ];
     }
 
     /**

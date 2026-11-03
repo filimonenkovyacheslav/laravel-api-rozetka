@@ -21,12 +21,15 @@
             @csrf
             <div class="form-group">
                 <label>Підтверджена к-сть</label>
-                <input name="reserved_quantity" class="form-control" value="{{ old('reserved_quantity', $item->reserved_quantity) }}" required>
+                <input type="number" name="reserved_quantity" min="0" max="{{ $item->quantity }}" step="1" class="form-control" value="{{ old('reserved_quantity', !empty($order->rozetka_status) ? ($item->confirmed_quantity ?? $item->reserved_quantity) : $item->reserved_quantity) }}" required>
             </div>
             @if(!empty($order->rozetka_status))
                 <div class="small text-muted mb-3">
-                    Обрана кількість зберігається локально. Підтвердження в Rozetka виконується
-                    кнопкою «Підтвердити всю кількість» у замовленні.
+                    Підтвердження відправляється до Rozetka для всіх товарів замовлення:
+                    для цієї позиції — обрана кількість, для інших — раніше підтверджена
+                    або запланована кількість. Якщо кількість менша за замовлену, Rozetka
+                    підтвердить замовлення з попередженням, але створення ТТН буде
+                    недоступним до повного підтвердження. Зміна кількості скидає серійні номери.
                 </div>
             @endif
             <button class="btn btn-primary">Підтвердити</button>

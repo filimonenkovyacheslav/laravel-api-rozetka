@@ -286,8 +286,11 @@ class OrderAdminController extends Controller
         return view('admin.order_items.edit', compact('item', 'order'));
     }
 
-    public function updateItem(Request $request, OrderItem $item)
-    {
+    public function updateItem(
+        Request $request,
+        OrderItem $item,
+        RozetkaFulfillmentService $fulfillmentService
+    ) {
         $order = Order::findOrFail($item->order_id);
 
         if (
@@ -295,7 +298,7 @@ class OrderAdminController extends Controller
             !RozetkaStatusPresenter::canConfirm($order)
         ) {
             return redirect()->route('admin.orders.show', $order)
-                ->with('err', 'Замовлення вже підтверджено в Rozetka.');
+                ->with('err', 'Зміна кількості недоступна після створення ТТН.');
         }
 
         $data = $request->validate([
@@ -307,16 +310,52 @@ class OrderAdminController extends Controller
             ],
         ]);
 
-        $item->update([
-            'reserved_quantity' => $data['reserved_quantity'],
-        ]);
+        if (!$this->isNewRozetkaOrder($order)) {
+            $item->update([
+                'reserved_quantity' => $data['reserved_quantity'],
+            ]);
 
-        return redirect()->route('admin.orders.show', $item->order_id)
-            ->with(
-                'ok',
-                'Кількість для підтвердження збережено. ' .
-                'Для Rozetka підтвердження надсилається окремо.'
+            return redirect()->route('admin.orders.show', $order)
+                ->with('ok', 'Підтверджену кількість збережено.');
+        }
+
+        try {
+            $result = $fulfillmentService->confirmItemQuantity(
+                $order,
+                $item->id,
+                (int) $data['reserved_quantity']
             );
+
+            $redirect = redirect()->route('admin.orders.show', $order)
+                ->with(
+                    'ok',
+                    $result['performed']
+                        ? 'Кількість підтверджено в Rozetka.'
+                        : 'Кількість уже підтверджена в Rozetka.'
+                );
+
+            if ($result['partial']) {
+                $redirect->with(
+                    'warn',
+                    $this->confirmationWarnings($result['warnings'], true)
+                );
+            } elseif (!empty($result['warnings'])) {
+                $redirect->with(
+                    'warn',
+                    $this->confirmationWarnings($result['warnings'], false)
+                );
+            }
+
+            return $redirect;
+        } catch (Throwable $e) {
+            report($e);
+
+            return redirect()->route('admin.orders.show', $order)
+                ->with(
+                    'err',
+                    'Помилка підтвердження Rozetka: ' . $e->getMessage()
+                );
+        }
     }
 
     /**
@@ -332,8 +371,10 @@ class OrderAdminController extends Controller
                 throw new RuntimeException('Скасоване замовлення не можна підтвердити.');
             }
 
+            $result = null;
+
             if ($this->isNewRozetkaOrder($order)) {
-                $fulfillmentService->confirmFullOrder($order);
+                $result = $fulfillmentService->confirmFullOrder($order);
             } else {
                 DB::transaction(function () use ($order) {
                     $items = $order->items()
@@ -358,8 +399,27 @@ class OrderAdminController extends Controller
                 });
             }
 
-            return redirect()->route('admin.orders.show', $order)
-                ->with('ok', 'Усю кількість товарів успішно підтверджено.');
+            $redirect = redirect()->route('admin.orders.show', $order)
+                ->with(
+                    'ok',
+                    $result !== null && !$result['performed']
+                        ? 'Вся кількість уже підтверджена.'
+                        : 'Кількість товарів підтверджено.'
+                );
+
+            if ($result !== null &&
+                ($result['partial'] || !empty($result['warnings']))
+            ) {
+                $redirect->with(
+                    'warn',
+                    $this->confirmationWarnings(
+                        $result['warnings'],
+                        $result['partial']
+                    )
+                );
+            }
+
+            return $redirect;
         } catch (Throwable $e) {
             report($e);
 
@@ -370,6 +430,50 @@ class OrderAdminController extends Controller
                     $e->getMessage()
                 );
         }
+    }
+
+    /**
+     * Keep server warnings (one per under-confirmed product) visible.
+     * Never treat HTTP 200 with warnings as a failed confirmation.
+     */
+    private function confirmationWarnings(array $warnings, $partial)
+    {
+        $messages = [];
+
+        if ($partial) {
+            $messages[] =
+                'Підтверджено частково. Створення ТТН недоступне, ' .
+                'доки не буде підтверджена вся замовлена кількість.';
+        }
+
+        foreach ($warnings as $warning) {
+            if (is_string($warning)) {
+                $messages[] = $warning;
+            } elseif (is_array($warning)) {
+                $code = trim((string) (
+                    $warning['supplierCode'] ??
+                    $warning['productCode'] ??
+                    ''
+                ));
+                $message = trim((string) (
+                    $warning['message'] ??
+                    $warning['description'] ??
+                    $warning['text'] ??
+                    ''
+                ));
+
+                if ($message !== '') {
+                    $messages[] = ($code !== '' ? $code . ': ' : '') . $message;
+                } else {
+                    $messages[] = json_encode(
+                        $warning,
+                        JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+                    );
+                }
+            }
+        }
+
+        return $messages;
     }
 
     public function downloadFile(OrderFile $file)

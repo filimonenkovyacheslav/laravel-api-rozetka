@@ -47,7 +47,7 @@ class RozetkaStatusPresenter
     {
         return in_array(
             (string) $order->rozetka_status,
-            ['new', 'updated'],
+            ['new', 'updated', 'confirmed'],
             true
         ) && trim((string) $order->tracking_number) === '';
     }
