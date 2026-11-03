@@ -29,6 +29,7 @@ class TestRozetkaAutoTtnFlow extends Command
             'services.rozetka.jwt_token' => config('services.rozetka.jwt_token'),
             'services.rozetka.actions_enabled' => config('services.rozetka.actions_enabled'),
             'services.rozetka.auto_ttn_enabled' => config('services.rozetka.auto_ttn_enabled'),
+            'services.rozetka.auto_ttn_only_order_id' => config('services.rozetka.auto_ttn_only_order_id'),
         ];
 
         config([
@@ -36,6 +37,7 @@ class TestRozetkaAutoTtnFlow extends Command
             'services.rozetka.jwt_token' => 'fake-token',
             'services.rozetka.actions_enabled' => true,
             'services.rozetka.auto_ttn_enabled' => true,
+            'services.rozetka.auto_ttn_only_order_id' => 0,
         ]);
 
         DB::beginTransaction();
@@ -165,9 +167,23 @@ class TestRozetkaAutoTtnFlow extends Command
             'Dry-run should not perform HTTP or write an attempt'
         );
 
+        // Simulate the scheduler: no --order-id is passed to the
+        // command itself, but the configured canary must scope it.
+        config(['services.rozetka.auto_ttn_only_order_id' => $order->id]);
+
+        $wrongIdExit = Artisan::call('rozetka:auto-ttn', [
+            '--execute' => true,
+            '--order-id' => (string) ($order->id + 1),
+        ]);
+
+        $this->assertTrue(
+            $wrongIdExit === 1 &&
+            count($calls) === 0,
+            'Canary must block execution for any other order'
+        );
+
         $exit = Artisan::call('rozetka:auto-ttn', [
             '--execute' => true,
-            '--order-id' => (string) $order->id,
         ]);
 
         $attempt = RozetkaAutoTtnAttempt::where('order_id', $order->id)->first();
@@ -185,7 +201,6 @@ class TestRozetkaAutoTtnFlow extends Command
 
         Artisan::call('rozetka:auto-ttn', [
             '--execute' => true,
-            '--order-id' => (string) $order->id,
         ]);
 
         $this->assertTrue(
@@ -194,6 +209,8 @@ class TestRozetkaAutoTtnFlow extends Command
             })) === 1,
             'Second run must not send another TTN POST'
         );
+
+        config(['services.rozetka.auto_ttn_only_order_id' => 0]);
     }
 
     private function testIncompleteQuantityExcluded()
