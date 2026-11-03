@@ -7,6 +7,7 @@ use App\Services\NovaPoshta\NovaPoshtaTtnService;
 use App\Services\Rozetka\RozetkaFulfillmentService;
 use RuntimeException;
 use App\Services\Rozetka\RozetkaApiException;
+use Illuminate\Support\Facades\Cache;
 use Throwable;
 
 class OrderTtnService
@@ -51,9 +52,21 @@ class OrderTtnService
                 ->createForOrder($order);
         }
 
-        return $this->createForRozetkaOrder(
-            $order
-        );
+        // Shared across scheduled and manually started TTN creation.
+        // Avoid two simultaneous POST /ttn requests for one order.
+        $lock = Cache::lock('rozetka-create-ttn-' . $order->id, 300);
+
+        if (!$lock->get()) {
+            throw new RuntimeException(
+                'Для цього замовлення вже створюється ТТН.'
+            );
+        }
+
+        try {
+            return $this->createForRozetkaOrder($order);
+        } finally {
+            $lock->release();
+        }
     }
 
     /**

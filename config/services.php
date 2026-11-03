@@ -71,6 +71,20 @@ return [
             env('ROZETKA_ACTIONS_ENABLED', false),
             FILTER_VALIDATE_BOOLEAN
         ),
+
+        // Separate opt-in switch; disabled by default, even if actions
+        // and syncing are enabled. Do not reuse ACTIONS for auto-TTN.
+        'auto_ttn_enabled' => filter_var(
+            env('ROZETKA_AUTO_TTN_ENABLED', false),
+            FILTER_VALIDATE_BOOLEAN
+        ),
+
+        // Scheduled runs inspect recent orders only. --order-id can
+        // be used to inspect an older order explicitly.
+        'auto_ttn_lookback_days' => (int) env(
+            'ROZETKA_AUTO_TTN_LOOKBACK_DAYS',
+            14
+        ),
     ],
 
     'nova_poshta' => [

@@ -90,6 +90,28 @@ class Kernel extends ConsoleKernel
                     false
                 );
             });
+
+        /*
+         * Optional automatic TTN processing, deliberately OFF unless
+         * ROZETKA_AUTO_TTN_ENABLED=true. Separate from order syncing.
+         * The command itself also checks both auto-TTN and actions
+         * flags and records every attempted order durably.
+         */
+        $schedule->command('rozetka:auto-ttn', [
+            '--execute' => true,
+            '--limit' => 20,
+        ])
+            ->everyTenMinutes()
+            ->withoutOverlapping(30)
+            ->when(function () {
+                return (bool) config(
+                    'services.rozetka.auto_ttn_enabled',
+                    false
+                ) && (bool) config(
+                    'services.rozetka.actions_enabled',
+                    false
+                );
+            });
     }
 
     /**
