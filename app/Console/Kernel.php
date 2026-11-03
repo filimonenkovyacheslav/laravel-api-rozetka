@@ -49,7 +49,7 @@ class Kernel extends ConsoleKernel
                     ->format('Y-m-d H:i:s'),
             ]
         )
-            ->everyTenMinutes()
+            ->everyFiveMinutes()
             ->withoutOverlapping(30)
             ->when(function () {
                 return (bool) config(
@@ -112,7 +112,7 @@ class Kernel extends ConsoleKernel
         }
 
         $schedule->command($autoTtnCommand)
-            ->everyTenMinutes()
+            ->everyFiveMinutes()
             ->withoutOverlapping(30)
             ->appendOutputTo(storage_path('logs/rozetka-auto-ttn.log'))
             ->when(function () {
