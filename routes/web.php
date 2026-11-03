@@ -25,6 +25,11 @@ Route::middleware(['web', 'admin.basic'])->prefix('admin')->name('admin.')->grou
     Route::get('/orders', [OrderAdminController::class, 'index'])->name('orders.index');
     Route::get('/orders/{order}', [OrderAdminController::class, 'show'])->name('orders.show');
 
+    Route::post(
+        '/orders/{order}/confirm-all',
+        [OrderAdminController::class, 'confirmAllQuantities']
+    )->name('orders.confirm-all');
+
     // Download NP marking for an existing Rozetka TTN (no batch required).
     Route::post(
         '/orders/{order}/rozetka-marking',

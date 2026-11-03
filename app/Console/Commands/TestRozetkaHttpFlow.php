@@ -100,6 +100,18 @@ class TestRozetkaHttpFlow extends Command
             $this->newLine();
 
             $this->info(
+                'Тест 7: підтвердження всієї кількості та захист від повторного POST'
+            );
+            $this->testConfirmFullOrder();
+
+            $this->newLine();
+
+            $this->info('Тест 8: статуси Rozetka та ЮЗД мають правильні підписи');
+            $this->testStatusPresenters();
+
+            $this->newLine();
+
+            $this->info(
                 'Усі fake HTTP-тести успішно пройдено.'
             );
 
@@ -1042,6 +1054,168 @@ class TestRozetkaHttpFlow extends Command
         $this->line(
             'OK: неготовий ЮЗД блокує ТТН, але не блокує confirm.'
         );
+    }
+
+    /**
+     * A confirmation button must confirm quantities remotely exactly once.
+     * No TTN should be created and a second click must be blocked.
+     */
+    private function testConfirmFullOrder()
+    {
+        $order = $this->createTestOrder('new', null, 'CONFIRM-ALL');
+        $guid = $order->guid;
+        $supplierCode = $order->items->first()->supplier_code;
+
+        // Existing manual planned quantity must be overridden to full.
+        $order->items->first()->update(['reserved_quantity' => 0]);
+
+        $calls = [];
+        $getCount = 0;
+
+        $this->resetHttp();
+
+        Http::fake(function (HttpRequest $request) use (
+            $guid,
+            $supplierCode,
+            &$calls,
+            &$getCount
+        ) {
+            $path = $this->getPath($request);
+            $method = $request->method();
+
+            $calls[] = [
+                'method' => $method,
+                'path' => $path,
+            ];
+
+            if ($method === 'GET' &&
+                $path === '/dropshipping/orders/' . $guid
+            ) {
+                $getCount++;
+
+                return Http::response(
+                    $this->makeOrderResponse(
+                        $guid,
+                        $supplierCode,
+                        $getCount === 1 ? 'new' : 'confirmed',
+                        $getCount === 1 ? null : 1,
+                        null
+                    ),
+                    200
+                );
+            }
+
+            if ($method === 'POST' &&
+                $path === '/dropshipping/orders/confirm/' . $guid
+            ) {
+                $payload = $request->data();
+
+                $this->assertTrue(
+                    (int) ($payload['products'][0]['confirmedQuantity'] ?? 0) === 1,
+                    'Кнопка повинна надіслати всю замовлену кількість.'
+                );
+
+                return Http::response([
+                    'orderId' => $guid,
+                    'orderStatus' => 'confirmed',
+                    'products' => [[
+                        'supplierCode' => $supplierCode,
+                        'confirmedQuantity' => 1,
+                        'serialNumbers' => [],
+                    ]],
+                ], 200);
+            }
+
+            throw new RuntimeException('Unexpected API request: ' . $method . ' ' . $path);
+        });
+
+        $service = app(\App\Services\Rozetka\RozetkaFulfillmentService::class);
+
+        $confirmed = $service->confirmFullOrder($order);
+
+        $this->assertTrue(
+            $confirmed->rozetka_status === 'confirmed' &&
+            (int) $confirmed->items->first()->confirmed_quantity === 1,
+            'Повна кількість не підтвердилась через Rozetka.'
+        );
+
+        $secondAttemptBlocked = false;
+        try {
+            $service->confirmFullOrder($confirmed);
+        } catch (RuntimeException $e) {
+            $secondAttemptBlocked =
+                strpos($e->getMessage(), 'вже підтверджене') !== false;
+        }
+
+        $this->assertTrue(
+            $secondAttemptBlocked,
+            'Повторне підтвердження не заблоковане.'
+        );
+
+        $this->assertTrue(
+            $this->countCalls(
+                $calls,
+                'POST',
+                '/dropshipping/orders/confirm/' . $guid
+            ) === 1,
+            'Повторний POST confirm виконано.'
+        );
+
+        $this->assertTrue(
+            $this->countCalls(
+                $calls,
+                'POST',
+                '/dropshipping/orders/ttn/' . $guid
+            ) === 0,
+            'Підтвердження товарів не повинно створювати ТТН.'
+        );
+
+        $this->line('OK: один POST confirm, повтор заблокований, TTN не створено.');
+    }
+
+    private function testStatusPresenters()
+    {
+        $statusLabels = [
+            'new' => ['Нове', '#337ab7'],
+            'updated' => ['Оновлено', '#ffc107'],
+            'deleted' => ['Скасовано', '#d9534f'],
+            'confirmed' => ['Підтверджено', '#5cb85c'],
+            'shipping' => ['Доставка', '#5bc0de'],
+            'closed' => ['Закрито', '#333333'],
+            'delivery_refused' => ['Відмова від отримання', '#a94442'],
+            'problem' => ['Проблема', '#a94442'],
+            'shipped_from_rozetka' => ['Доставка від Розетки', '#5bc0de'],
+        ];
+
+        $this->assertTrue(
+            count(\App\Support\RozetkaStatusPresenter::orderStatuses()) === 9,
+            'Має бути рівно 9 статусів Rozetka.'
+        );
+
+        foreach ($statusLabels as $code => $values) {
+            $meta = \App\Support\RozetkaStatusPresenter::orderStatus($code);
+
+            $this->assertTrue(
+                ($meta['label'] ?? null) === $values[0] &&
+                ($meta['color'] ?? null) === $values[1],
+                'Неправильний підпис/колір Rozetka: ' . $code
+            );
+        }
+
+        foreach ([
+            null => 'Невідомий',
+            'not_uploaded' => 'Не завантажено',
+            'verified' => 'Пройшло звірку',
+            'problem' => 'Є проблеми',
+            'skipped' => 'Перевірку пропущено',
+        ] as $code => $label) {
+            $this->assertTrue(
+                \App\Support\RozetkaStatusPresenter::uzdLabel($code) === $label,
+                'Неправильний статус Вчасно: ' . (string) $code
+            );
+        }
+
+        $this->line('OK: 9 статусів Rozetka та 5 варіантів ЮЗД.');
     }
 
     /**

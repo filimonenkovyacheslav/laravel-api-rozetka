@@ -12,6 +12,10 @@ use Illuminate\Validation\Rule;
 use App\Services\NovaPoshta\NovaPoshtaTtnService;
 use Throwable;
 use App\Models\ProductDimension;
+use App\Services\Rozetka\RozetkaFulfillmentService;
+use App\Support\RozetkaStatusPresenter;
+use Illuminate\Support\Facades\DB;
+use RuntimeException;
 
 class OrderAdminController extends Controller
 {
@@ -19,7 +23,15 @@ class OrderAdminController extends Controller
     {
         $validated = $request->validate([
             'q' => ['nullable','string','max:200'],
-            'status' => ['nullable', Rule::in(['pending','created','updated','shipped','canceled'])],
+            'status' => [
+                'nullable',
+                Rule::in(array_merge(
+                    ['pending', 'created', 'updated', 'shipped', 'canceled'],
+                    array_map(function ($status) {
+                        return 'rozetka:' . $status;
+                    }, array_keys(RozetkaStatusPresenter::orderStatuses()))
+                )),
+            ],
             'from' => ['nullable','date_format:Y-m-d'],
             'to' => ['nullable','date_format:Y-m-d'],
             'per_page' => ['nullable','integer','min:5','max:100'],
@@ -56,7 +68,21 @@ class OrderAdminController extends Controller
         }
 
         if (!empty($validated['status'])) {
-            $query->where('status', $validated['status']);
+            $selectedStatus = $validated['status'];
+
+            if (strpos($selectedStatus, 'rozetka:') === 0) {
+                $query->where(
+                    'rozetka_status',
+                    substr($selectedStatus, strlen('rozetka:'))
+                );
+            } else {
+                // Old internal statuses apply only to legacy orders.
+                $query->where('status', $selectedStatus)
+                    ->where(function ($sub) {
+                        $sub->whereNull('rozetka_status')
+                            ->orWhere('rozetka_status', '');
+                    });
+            }
         }
 
         if (!empty($validated['q'])) {
@@ -247,13 +273,38 @@ class OrderAdminController extends Controller
 
     public function editItem(OrderItem $item)
     {
-        return view('admin.order_items.edit', compact('item'));
+        $order = Order::findOrFail($item->order_id);
+
+        if (
+            $this->isNewRozetkaOrder($order) &&
+            !RozetkaStatusPresenter::canConfirm($order)
+        ) {
+            return redirect()->route('admin.orders.show', $order)
+                ->with('err', 'Редагування підтвердженої кількості вже недоступне.');
+        }
+
+        return view('admin.order_items.edit', compact('item', 'order'));
     }
 
     public function updateItem(Request $request, OrderItem $item)
     {
+        $order = Order::findOrFail($item->order_id);
+
+        if (
+            $this->isNewRozetkaOrder($order) &&
+            !RozetkaStatusPresenter::canConfirm($order)
+        ) {
+            return redirect()->route('admin.orders.show', $order)
+                ->with('err', 'Замовлення вже підтверджено в Rozetka.');
+        }
+
         $data = $request->validate([
-            'reserved_quantity' => ['required','integer','min:0'],
+            'reserved_quantity' => [
+                'required',
+                'integer',
+                'min:0',
+                'max:' . (int) $item->quantity,
+            ],
         ]);
 
         $item->update([
@@ -261,7 +312,64 @@ class OrderAdminController extends Controller
         ]);
 
         return redirect()->route('admin.orders.show', $item->order_id)
-            ->with('ok', 'Reserved quantity updated');
+            ->with(
+                'ok',
+                'Кількість для підтвердження збережено. ' .
+                'Для Rozetka підтвердження надсилається окремо.'
+            );
+    }
+
+    /**
+     * Confirm all ordered quantities for a single order.
+     * New Supplier API orders call Rozetka; legacy orders remain local.
+     */
+    public function confirmAllQuantities(
+        Order $order,
+        RozetkaFulfillmentService $fulfillmentService
+    ) {
+        try {
+            if ($order->status === 'canceled') {
+                throw new RuntimeException('Скасоване замовлення не можна підтвердити.');
+            }
+
+            if ($this->isNewRozetkaOrder($order)) {
+                $fulfillmentService->confirmFullOrder($order);
+            } else {
+                DB::transaction(function () use ($order) {
+                    $items = $order->items()
+                        ->lockForUpdate()
+                        ->get();
+
+                    if ($items->isEmpty()) {
+                        throw new RuntimeException('У замовленні немає товарів.');
+                    }
+
+                    foreach ($items as $item) {
+                        if ((int) $item->quantity < 1) {
+                            throw new RuntimeException(
+                                'Некоректна кількість товару ' .
+                                $item->supplier_code . '.'
+                            );
+                        }
+
+                        $item->reserved_quantity = (int) $item->quantity;
+                        $item->save();
+                    }
+                });
+            }
+
+            return redirect()->route('admin.orders.show', $order)
+                ->with('ok', 'Усю кількість товарів успішно підтверджено.');
+        } catch (Throwable $e) {
+            report($e);
+
+            return redirect()->route('admin.orders.show', $order)
+                ->with(
+                    'err',
+                    'Не вдалося підтвердити всі товари: ' .
+                    $e->getMessage()
+                );
+        }
     }
 
     public function downloadFile(OrderFile $file)

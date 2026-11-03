@@ -35,6 +35,22 @@
     'shipped'  => 'badge-success',
     'canceled' => 'badge-danger',
   ][$order->status] ?? 'badge-secondary';
+
+  $isRozetkaOrder = !empty($order->rozetka_status);
+  $rzStatus = \App\Support\RozetkaStatusPresenter::orderStatus($order->rozetka_status);
+  $canEditQuantities = !$isRozetkaOrder ||
+      \App\Support\RozetkaStatusPresenter::canConfirm($order);
+  $needsFullConfirmation = $order->items->contains(function ($item) use ($isRozetkaOrder) {
+      if ($isRozetkaOrder) {
+          return $item->confirmed_quantity === null ||
+              (int) $item->confirmed_quantity !== (int) $item->quantity;
+      }
+      return (int) $item->reserved_quantity !== (int) $item->quantity;
+  });
+  $showConfirmAll = $order->items->isNotEmpty() &&
+      $order->status !== 'canceled' &&
+      $canEditQuantities &&
+      ($isRozetkaOrder || $needsFullConfirmation);
 @endphp
 
 <div class="card mb-3">
@@ -42,10 +58,24 @@
         <div class="row">
             <div class="col-md-6">
                 <div><span class="text-muted">GUID:</span> <span class="mono">{{ $order->guid }}</span></div>
-                <div><span class="text-muted">Статус:</span> <span class="badge {{ $statusClass }}">{{ $order->status }}</span></div>
-                @if(!empty($order->rozetka_status))
-                    <div><span class="text-muted">ЮЗД (Вчасно):</span>
-                        <span class="badge {{ in_array($order->uzd_status, ['verified', 'skipped'], true) ? 'badge-success' : 'badge-warning' }}">{{ $order->uzd_status ?: 'невідомий' }}</span>
+                <div>
+                    <span class="text-muted">Статус:</span>
+                    @if($isRozetkaOrder)
+                        <span
+                            class="badge badge-status"
+                            style="background-color: {{ $rzStatus['color'] }}; color: {{ $order->rozetka_status === 'updated' ? '#212529' : '#fff' }};"
+                            title="{{ $order->rozetka_status }}"
+                        >
+                            {{ $rzStatus['label'] }}
+                        </span>
+                    @else
+                        <span class="badge {{ $statusClass }}">{{ $order->status }}</span>
+                    @endif
+                </div>
+                @if($isRozetkaOrder)
+                    <div>
+                        <span class="text-muted">ЮЗД (Вчасно):</span>
+                        {{ \App\Support\RozetkaStatusPresenter::uzdLabel($order->uzd_status) }}
                     </div>
                 @endif
                 <div><span class="text-muted">Клієнт:</span> {{ $order->customer_name }}</div>
@@ -79,16 +109,16 @@
             </div>            
         </div>
 
-        <hr>
-        <div class="d-flex align-items-center">
-            <div style="width: 400px; margin-left: 50px;">
-                можливі варіанти статусу:<br>
-                "created" - статус при опрацюванні замовлення,<br>
-                "updated" - статус при опрацюванні редагованого замовлення,<br>
-                "shipped" - відвантажене замовлення (є номер ТТН).   
+        @if(!$isRozetkaOrder)
+            <hr>
+            <div class="d-flex align-items-center">
+                <div class="text-muted">
+                    Внутрішні статуси: created — в обробці;
+                    updated — оновлено; shipped — відвантажено.
+                </div>
             </div>
-        </div>
-        <hr>
+            <hr>
+        @endif
 
         <div class="d-flex align-items-center">
             @if(empty($order->rozetka_status))
@@ -164,9 +194,28 @@
 </div>
 
 <div class="card mb-3">
-    <div class="card-header d-flex align-items-center">
-        <strong>Товари</strong>
-        <span class="text-muted ml-2">(можна редагувати тільки зарезервовану кількість)</span>
+    <div class="card-header d-flex align-items-center justify-content-between flex-wrap">
+        <div>
+            <strong>Товари</strong>
+            <span class="text-muted ml-2">(редагується кількість для підтвердження)</span>
+        </div>
+        @if($showConfirmAll)
+            <form
+                method="post"
+                action="{{ route('admin.orders.confirm-all', $order) }}"
+                class="my-1"
+                onsubmit="return confirm('Підтвердити всю замовлену кількість товарів{{ $isRozetkaOrder ? ' у Rozetka' : '' }}?');"
+            >
+                @csrf
+                <button
+                    type="submit"
+                    class="btn btn-sm btn-success"
+                    @if($isRozetkaOrder && !config('services.rozetka.actions_enabled', false)) disabled @endif
+                >
+                    Підтвердити всю кількість
+                </button>
+            </form>
+        @endif
     </div>
     <div class="table-responsive">
         <table class="table table-sm mb-0">
@@ -175,8 +224,8 @@
                 <th>Внутрішній код товару постачальника</th>
                 <th>Артикул (RZ)</th>
                 <th>Посилання (RZ)</th>
-                <th>К-сть в рахунку-фактурі</th>
-                <th>Зарезервована к-сть</th>
+                <th>Замовлена к-сть</th>
+                <th>Підтверджена к-сть</th>
                 <th>Ціна</th>
                 <th></th>
             </tr>
@@ -188,7 +237,12 @@
                     <td class="mono">{{ $it->rz_code }}</td>
                     <td class="mono"><a href="https://rozetka.com.ua/{{ $it->rz_code }}/p{{ $it->rz_code }}/" target= _blank >{{ $it->rz_code }}</a></td>
                     <td>{{ $it->quantity }}</td>
-                    <td><strong>{{ $it->reserved_quantity }}</strong></td>
+                    <td>
+                        <strong>{{ $isRozetkaOrder ? ($it->confirmed_quantity ?? '—') : ($it->reserved_quantity ?? '—') }}</strong>
+                        @if($isRozetkaOrder && $canEditQuantities && $it->reserved_quantity !== null)
+                            <div class="small text-muted">Заплановано: {{ $it->reserved_quantity }}</div>
+                        @endif
+                    </td>
                     <td>
                         @if($it->price !== null && $it->price !== '')
                             {{
@@ -204,7 +258,9 @@
                         @endif
                     </td>
                     <td class="text-right">
-                        <a class="btn btn-sm btn-outline-primary" href="{{ route('admin.items.edit', $it->id) }}">Зарезервувати</a>
+                        @if($canEditQuantities && $order->status !== 'canceled')
+                            <a class="btn btn-sm btn-outline-primary" href="{{ route('admin.items.edit', $it->id) }}">Підтвердити</a>
+                        @endif
                     </td>
                 </tr>
             @endforeach
