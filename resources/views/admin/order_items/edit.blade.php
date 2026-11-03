@@ -1,7 +1,7 @@
 @extends('admin.layout')
 
-@section('title', 'Резервування товару')
-@section('header', 'Резервування товару')
+@section('title', 'Зміна кількості товару')
+@section('header', 'Зміна кількості товару')
 
 @section('content')
 <div class="mb-3">
@@ -20,18 +20,18 @@
         <form method="post" action="{{ route('admin.items.update', $item->id) }}">
             @csrf
             <div class="form-group">
-                <label>Зарезервована к-сть</label>
+                <label>Підтверджена к-сть</label>
                 <input type="number" name="reserved_quantity" min="0" max="{{ $item->quantity }}" step="1" class="form-control" value="{{ old('reserved_quantity', $item->reserved_quantity ?? $item->quantity) }}" required>
             </div>
             @if(!empty($order->rozetka_status))
                 <div class="small text-muted mb-3">
-                    Тут кількість лише резервується локально. Жодного запиту до Rozetka
-                    ця кнопка не надсилає. Щоб підтвердити всі зарезервовані
-                    кількості в API, поверніться до замовлення й натисніть
+                    Тут кількість лише змінюється локально. Жодного запиту до Rozetka
+                    ця кнопка не надсилає. Щоб підтвердити всі зміни
+                    в API, поверніться до замовлення й натисніть
                     «Підтвердити всю кількість».
                 </div>
             @endif
-            <button class="btn btn-primary">Зарезервувати</button>
+            <button class="btn btn-primary">Змінити</button>
         </form>
     </div>
 </div>
