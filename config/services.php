@@ -78,6 +78,13 @@ return [
             env('ROZETKA_AUTO_TTN_ENABLED', false),
             FILTER_VALIDATE_BOOLEAN
         ),
+
+        // Scheduled runs inspect recent orders only. --order-id can
+        // be used to inspect an older order explicitly.
+        'auto_ttn_lookback_days' => (int) env(
+            'ROZETKA_AUTO_TTN_LOOKBACK_DAYS',
+            14
+        ),
     ],
 
     'nova_poshta' => [
