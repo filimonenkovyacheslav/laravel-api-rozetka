@@ -62,6 +62,12 @@ class AutoCreateRozetkaTtn extends Command
                 $q->whereNull('tracking_number')
                     ->orWhere('tracking_number', '');
             })
+            ->whereHas('items')
+            ->whereDoesntHave('items', function ($q) {
+                $q->whereNull('confirmed_quantity')
+                    ->orWhereColumn('confirmed_quantity', '<>', 'quantity')
+                    ->orWhere('quantity', '<', 1);
+            })
             ->whereNotIn(
                 'id',
                 RozetkaAutoTtnAttempt::query()->select('order_id')
@@ -81,7 +87,9 @@ class AutoCreateRozetkaTtn extends Command
             $query->where('created_at', '>=', now()->subDays($lookbackDays));
         }
 
-        $orders = $query->orderBy('id')->limit($limit)->get();
+        // Inspect extra candidates: orders without dimensions must
+        // not starve newer orders that are ready to ship.
+        $orders = $query->orderBy('id')->limit(max($limit * 20, 100))->get();
 
         $checked = 0;
         $ready = 0;
@@ -89,6 +97,10 @@ class AutoCreateRozetkaTtn extends Command
         $needsReview = 0;
 
         foreach ($orders as $order) {
+            if ($ready >= $limit) {
+                break;
+            }
+
             $checked++;
 
             try {
