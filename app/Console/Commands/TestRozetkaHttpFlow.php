@@ -55,10 +55,17 @@ class TestRozetkaHttpFlow extends Command
 
         try {
             $this->info(
-                'Тест 1: new → confirmed → shipping'
+                'Тест 1: confirmed → shipping без POST confirm'
             );
 
             $this->testHappyPath();
+
+            $this->newLine();
+
+            $this->info(
+                'Тест 1.1: new/updated вимагають явного підтвердження до ТТН'
+            );
+            $this->testTtnRequiresConfirmation();
 
             $this->newLine();
 
@@ -146,15 +153,14 @@ class TestRozetkaHttpFlow extends Command
     /**
      * Полностью успешная цепочка:
      *
-     * GET new
-     * POST confirm
-     * POST ttn
+     * GET confirmed
+     * POST ttn (without implicit confirmation)
      */
     private function testHappyPath()
     {
         $order = $this->createTestOrder(
-            'new',
-            null,
+            'confirmed',
+            1,
             'HAPPY'
         );
 
@@ -197,55 +203,12 @@ class TestRozetkaHttpFlow extends Command
                     $this->makeOrderResponse(
                         $guid,
                         $supplierCode,
-                        'new',
-                        null,
+                        'confirmed',
+                        1,
                         null
                     ),
                     200
                 );
-            }
-
-            if (
-                $request->method() === 'POST' &&
-                $path ===
-                    '/dropshipping/orders/confirm/' .
-                    $guid
-            ) {
-                $data = $request->data();
-
-                $this->assertTrue(
-                    isset(
-                        $data['products'][0]
-                            ['confirmedQuantity']
-                    ) &&
-                    (int) $data['products'][0]
-                        ['confirmedQuantity'] === 1,
-                    'Confirm payload містить неправильний confirmedQuantity.'
-                );
-
-                return Http::response([
-                    'orderId' =>
-                        $guid,
-
-                    'orderStatus' =>
-                        'confirmed',
-
-                    'products' => [
-                        [
-                            'supplierCode' =>
-                                $supplierCode,
-
-                            'confirmedQuantity' =>
-                                1,
-
-                            'serialNumbers' =>
-                                [],
-                        ],
-                    ],
-
-                    'warnings' =>
-                        [],
-                ], 200);
             }
 
             if (
@@ -331,8 +294,8 @@ class TestRozetkaHttpFlow extends Command
                 'POST',
                 '/dropshipping/orders/confirm/' .
                     $guid
-            ) === 1,
-            'POST confirm мав бути виконаний рівно 1 раз.'
+            ) === 0,
+            'Створення ТТН не повинно відправляти POST confirm.'
         );
 
         $this->assertTrue(
@@ -360,8 +323,77 @@ class TestRozetkaHttpFlow extends Command
         );
 
         $this->line(
-            'OK: GET → confirm → TTN, без повторних POST.'
+            'OK: confirmed → TTN, без неявного POST confirm.'
         );
+    }
+
+    /**
+     * Creating a TTN on new/updated orders must NOT implicitly
+     * confirm the order. Only the explicit confirm-all action may POST.
+     */
+    private function testTtnRequiresConfirmation()
+    {
+        foreach (['new', 'updated'] as $status) {
+            $order = $this->createTestOrder(
+                $status,
+                null,
+                'REQUIRES-CONFIRM-' . strtoupper($status)
+            );
+
+            $calls = [];
+            $guid = $order->guid;
+            $supplierCode = $order->items->first()->supplier_code;
+
+            $this->resetHttp();
+
+            Http::fake(function (HttpRequest $request) use (
+                $guid,
+                $supplierCode,
+                $status,
+                &$calls
+            ) {
+                $path = $this->getPath($request);
+                $calls[] = [$request->method(), $path];
+
+                if (
+                    $request->method() === 'GET' &&
+                    $path === '/dropshipping/orders/' . $guid
+                ) {
+                    return Http::response(
+                        $this->makeOrderResponse(
+                            $guid, $supplierCode, $status, null, null
+                        ),
+                        200
+                    );
+                }
+
+                throw new RuntimeException(
+                    'Implicit API POST forbidden: ' .
+                    $request->method() . ' ' . $path
+                );
+            });
+
+            $blocked = false;
+
+            try {
+                app(OrderTtnService::class)->createForOrder($order);
+            } catch (RuntimeException $e) {
+                $blocked = strpos(
+                    $e->getMessage(), 'Підтвердити всю кількість'
+                ) !== false;
+            }
+
+            $this->assertTrue(
+                $blocked,
+                'Не заблоковано ТТН до підтвердження статусу ' . $status
+            );
+            $this->assertTrue(
+                $calls === [['GET', '/dropshipping/orders/' . $guid]],
+                'Зайвий POST під час створення ТТН зі статусу ' . $status
+            );
+        }
+
+        $this->line('OK: new/updated блокуються до явного підтвердження.');
     }
 
     /**
@@ -980,16 +1012,20 @@ class TestRozetkaHttpFlow extends Command
             );
         }
 
-        // Нове замовлення: confirm дозволений, POST /ttn заблокований.
+        // A new order can be confirmed explicitly even while UZD
+        // is not uploaded. TTN must still be blocked.
         $order = $this->createTestOrder('new', null, 'UZD-NEW');
         $guid = $order->guid;
         $supplierCode = $order->items->first()->supplier_code;
         $calls = [];
+        $remoteStatus = 'new';
 
-        Http::swap(new HttpFactory());
+        $this->resetHttp();
+
         Http::fake(function (HttpRequest $request) use (
             $guid,
             $supplierCode,
+            &$remoteStatus,
             &$calls
         ) {
             $path = $this->getPath($request);
@@ -1002,8 +1038,8 @@ class TestRozetkaHttpFlow extends Command
                 $response = $this->makeOrderResponse(
                     $guid,
                     $supplierCode,
-                    'new',
-                    null,
+                    $remoteStatus,
+                    $remoteStatus === 'confirmed' ? 1 : null,
                     null
                 );
                 $response['uzdStatus'] = 'not_uploaded';
@@ -1015,16 +1051,16 @@ class TestRozetkaHttpFlow extends Command
                 $request->method() === 'POST' &&
                 $path === '/dropshipping/orders/confirm/' . $guid
             ) {
+                $remoteStatus = 'confirmed';
+
                 return Http::response([
                     'orderId' => $guid,
                     'orderStatus' => 'confirmed',
-                    'products' => [
-                        [
-                            'supplierCode' => $supplierCode,
-                            'confirmedQuantity' => 1,
-                            'serialNumbers' => [],
-                        ],
-                    ],
+                    'products' => [[
+                        'supplierCode' => $supplierCode,
+                        'confirmedQuantity' => 1,
+                        'serialNumbers' => [],
+                    ]],
                     'warnings' => [],
                 ], 200);
             }
@@ -1035,31 +1071,52 @@ class TestRozetkaHttpFlow extends Command
             );
         });
 
+        // This is the action behind the green confirm-all button.
+        $confirmation = app(
+            \App\Services\Rozetka\RozetkaFulfillmentService::class
+        )->confirmFullOrder($order);
+
+        $this->assertTrue(
+            $confirmation['performed'] === true &&
+            $confirmation['order']->rozetka_status === 'confirmed',
+            'Явне підтвердження нового замовлення не виконалось.'
+        );
+
         $blocked = false;
 
         try {
-            app(OrderTtnService::class)->createForOrder($order);
+            app(OrderTtnService::class)->createForOrder(
+                $confirmation['order']
+            );
         } catch (RuntimeException $e) {
             $blocked = strpos($e->getMessage(), 'ЮЗД') !== false;
         }
 
-        $this->assertTrue($blocked, 'Не заблоковано TTN для new/not_uploaded.');
+        $this->assertTrue(
+            $blocked,
+            'ТТН має блокуватись за непідтвердженого ЮЗД.'
+        );
+
         $this->assertTrue(
             $calls === [
                 ['GET', '/dropshipping/orders/' . $guid],
                 ['POST', '/dropshipping/orders/confirm/' . $guid],
+                ['GET', '/dropshipping/orders/' . $guid],
+                ['GET', '/dropshipping/orders/' . $guid],
             ],
-            'Для new/not_uploaded потрібно виконати GET і confirm, без TTN POST.'
+            'Потрібне одне явне підтвердження й жодного POST TTN.'
         );
+
         $order->refresh();
+
         $this->assertTrue(
             $order->rozetka_status === 'confirmed' &&
             $order->uzd_status === 'not_uploaded',
-            'Після підтвердження замовлення статуси збережено неправильно.'
+            'Статуси після явного підтвердження невірні.'
         );
 
         $this->line(
-            'OK: неготовий ЮЗД блокує ТТН, але не блокує confirm.'
+            'OK: явний confirm дозволено, TTN блокується до verified UZD.'
         );
     }
 
