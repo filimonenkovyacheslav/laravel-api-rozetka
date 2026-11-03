@@ -6,6 +6,15 @@
 @section('content')
 
 <style>
+    /* Orders index only: 1300px table, with horizontal scrolling on narrow screens. */
+    .container {
+        max-width: 1330px;
+    }
+
+    .orders-list-table {
+        min-width: 1300px;
+    }
+
     .tr-danger {
         color: #fff;
         background: #f57c73;
@@ -393,7 +402,7 @@
     </div>
     
     <div class="table-responsive">
-        <table class="table table-sm table-hover mb-0">
+        <table class="table table-sm table-hover mb-0 orders-list-table">
             <thead class="thead-light">
                 <tr>
                     <th
