@@ -39,6 +39,27 @@ class AutoCreateRozetkaTtn extends Command
             return 1;
         }
 
+        /*
+         * A production canary also constrains direct --execute calls,
+         * not just the scheduler's command arguments.
+         */
+        $canaryOrderId = (int) config(
+            'services.rozetka.auto_ttn_only_order_id',
+            0
+        );
+
+        if ($execute && $canaryOrderId > 0) {
+            if ($id !== null && (int) $id !== $canaryOrderId) {
+                $this->error(
+                    'Canary mode: only order ID ' . $canaryOrderId .
+                    ' is allowed for --execute.'
+                );
+                return 1;
+            }
+
+            $id = (string) $canaryOrderId;
+        }
+
         if ($execute && (
             !config('services.rozetka.auto_ttn_enabled', false) ||
             !config('services.rozetka.actions_enabled', false)
