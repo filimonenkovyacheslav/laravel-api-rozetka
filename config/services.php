@@ -71,6 +71,13 @@ return [
             env('ROZETKA_ACTIONS_ENABLED', false),
             FILTER_VALIDATE_BOOLEAN
         ),
+
+        // Separate opt-in switch; disabled by default, even if actions
+        // and syncing are enabled. Do not reuse ACTIONS for auto-TTN.
+        'auto_ttn_enabled' => filter_var(
+            env('ROZETKA_AUTO_TTN_ENABLED', false),
+            FILTER_VALIDATE_BOOLEAN
+        ),
     ],
 
     'nova_poshta' => [
