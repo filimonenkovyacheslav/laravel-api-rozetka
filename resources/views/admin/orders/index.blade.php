@@ -650,7 +650,7 @@
                                             method="post"
                                             action="{{ route('admin.orders.confirm-all', $order) }}"
                                             class="my-1"
-                                            onsubmit="return confirm('Підтвердити зміни кількості всіх товарів{{ $isRozetkaOrder ? ' у Rozetka' : '' }}?');"
+                                            onsubmit="return confirm('Підтвердити кількість всіх товарів у замовленні{{ $isRozetkaOrder ? ' Rozetka' : '' }}?');"
                                         >
                                             @csrf
                                             <button
