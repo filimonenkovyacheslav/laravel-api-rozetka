@@ -106,6 +106,13 @@ class TestRozetkaHttpFlow extends Command
 
             $this->newLine();
 
+            $this->info(
+                'Тест 7.1: часткове підтвердження, warnings та повторна зміна в confirmed'
+            );
+            $this->testPartialConfirmation();
+
+            $this->newLine();
+
             $this->info('Тест 8: статуси Rozetka та ЮЗД мають правильні підписи');
             $this->testStatusPresenters();
 
@@ -1139,17 +1146,11 @@ class TestRozetkaHttpFlow extends Command
             'Повна кількість не підтвердилась через Rozetka.'
         );
 
-        $secondAttemptBlocked = false;
-        try {
-            $service->confirmFullOrder($confirmed);
-        } catch (RuntimeException $e) {
-            $secondAttemptBlocked =
-                strpos($e->getMessage(), 'вже підтверджене') !== false;
-        }
+        $secondResult = $service->confirmFullOrder($confirmed);
 
         $this->assertTrue(
-            $secondAttemptBlocked,
-            'Повторне підтвердження не заблоковане.'
+            $secondResult['performed'] === false,
+            'Повтор без змін має завершуватись без POST.'
         );
 
         $this->assertTrue(
@@ -1171,6 +1172,218 @@ class TestRozetkaHttpFlow extends Command
         );
 
         $this->line('OK: один POST confirm, повтор заблокований, TTN не створено.');
+    }
+
+    /**
+     * The Rozetka contract confirms all products in one payload.
+     * A partial quantity is HTTP 200 with warnings, and it can be
+     * amended while orderStatus=confirmed. Shipping remains locked.
+     */
+    private function testPartialConfirmation()
+    {
+        $order = $this->createTestOrder('new', null, 'PARTIAL-CONFIRM');
+        $first = $order->items->first();
+        $firstCode = $first->supplier_code;
+        $secondCode = 'LOCAL-HTTP-SECOND-' . $order->id;
+
+        $second = $order->items()->create([
+            'supplier_code' => $secondCode,
+            'rz_code' => $this->rzCode,
+            'quantity' => 2,
+            'confirmed_quantity' => null,
+            'reserved_quantity' => 2,
+            'serial_number' => json_encode([]),
+            'price' => null,
+        ]);
+
+        $status = 'new';
+        $remoteValues = [
+            $firstCode => null,
+            $secondCode => null,
+        ];
+
+        $posts = 0;
+        $gets = 0;
+        $postPayloads = [];
+
+        $this->resetHttp();
+
+        Http::fake(function (HttpRequest $request) use (
+            $order,
+            $firstCode,
+            $secondCode,
+            &$status,
+            &$remoteValues,
+            &$posts,
+            &$gets,
+            &$postPayloads
+        ) {
+            $path = $this->getPath($request);
+            $method = $request->method();
+
+            if ($method === 'GET' &&
+                $path === '/dropshipping/orders/' . $order->guid
+            ) {
+                $gets++;
+
+                $result = $this->makeOrderResponse(
+                    $order->guid,
+                    $firstCode,
+                    $status,
+                    $remoteValues[$firstCode],
+                    $status === 'shipping' ? '20400557861920' : null
+                );
+
+                $result['products'] = [
+                    [
+                        'supplierCode' => $firstCode,
+                        'rzCode' => (int) $this->rzCode,
+                        'quantity' => 1,
+                        'confirmedQuantity' => $remoteValues[$firstCode],
+                        'serialNumbers' => [],
+                    ],
+                    [
+                        'supplierCode' => $secondCode,
+                        'rzCode' => (int) $this->rzCode,
+                        'quantity' => 2,
+                        'confirmedQuantity' => $remoteValues[$secondCode],
+                        'serialNumbers' => [],
+                    ],
+                ];
+
+                return Http::response($result, 200);
+            }
+
+            if ($method === 'POST' &&
+                $path === '/dropshipping/orders/confirm/' . $order->guid
+            ) {
+                $posts++;
+                $products = $request->data()['products'] ?? [];
+                $postPayloads[] = $products;
+
+                $this->assertTrue(
+                    count($products) === 2 &&
+                    $products[0]['supplierCode'] === $firstCode &&
+                    $products[1]['supplierCode'] === $secondCode,
+                    'POST confirm повинен містити всі позиції замовлення.'
+                );
+
+                foreach ($products as $product) {
+                    $remoteValues[$product['supplierCode']] =
+                        (int) $product['confirmedQuantity'];
+                }
+
+                $status = 'confirmed';
+
+                $warnings = [];
+                foreach ($products as $product) {
+                    $ordered = $product['supplierCode'] === $firstCode ? 1 : 2;
+
+                    if ((int) $product['confirmedQuantity'] < $ordered) {
+                        $warnings[] = [
+                            'supplierCode' => $product['supplierCode'],
+                            'message' => 'Підтверджено частково',
+                        ];
+                    }
+                }
+
+                return Http::response([
+                    'orderId' => $order->guid,
+                    'orderStatus' => 'confirmed',
+                    'products' => $products,
+                    'warnings' => $warnings,
+                ], 200);
+            }
+
+            throw new RuntimeException(
+                'Unexpected partial-confirmation request: ' .
+                $method . ' ' . $path
+            );
+        });
+
+        $service = app(\App\Services\Rozetka\RozetkaFulfillmentService::class);
+
+        $partial = $service->confirmItemQuantity(
+            $order,
+            $first->id,
+            0
+        );
+
+        $this->assertTrue(
+            $partial['performed'] === true &&
+            $partial['partial'] === true &&
+            count($partial['warnings']) === 1,
+            'HTTP 200 з warnings має бути успішним частковим підтвердженням.'
+        );
+
+        $this->assertTrue(
+            $posts === 1 &&
+            (int) $postPayloads[0][0]['confirmedQuantity'] === 0 &&
+            (int) $postPayloads[0][1]['confirmedQuantity'] === 2,
+            'Неправильний повний payload часткового підтвердження.'
+        );
+
+        $partial['order']->refresh();
+        $this->assertTrue(
+            $partial['order']->rozetka_status === 'confirmed' &&
+            (int) $partial['order']->items->first()->confirmed_quantity === 0,
+            'Після warnings замовлення має перейти в confirmed.'
+        );
+
+        $blocked = false;
+        try {
+            $service->buildCargoSeats($partial['order']);
+        } catch (RuntimeException $e) {
+            $blocked = strpos($e->getMessage(), 'ще не підтверджено повністю') !== false;
+        }
+
+        $this->assertTrue(
+            $blocked,
+            'Неповне confirmedQuantity повинно блокувати створення ТТН.'
+        );
+
+        // Even confirmed orders allow quantity changes before TTN.
+        $full = $service->confirmFullOrder($partial['order']);
+
+        $this->assertTrue(
+            $full['performed'] === true &&
+            $full['partial'] === false &&
+            $posts === 2 &&
+            (int) $postPayloads[1][0]['confirmedQuantity'] === 1 &&
+            (int) $postPayloads[1][1]['confirmedQuantity'] === 2,
+            'confirmed має дозволяти допідтвердження до повної кількості.'
+        );
+
+        $this->assertTrue(
+            ($postPayloads[1][0]['serialNumbers'] ?? null) === [],
+            'Зміна підтвердженої кількості повинна скидати серійні номери.'
+        );
+
+        // Reconfirming unchanged quantities must not emit another POST.
+        $noop = $service->confirmFullOrder($full['order']);
+        $this->assertTrue(
+            $noop['performed'] === false && $posts === 2,
+            'Незмінне confirmed не повинно створювати додатковий POST.'
+        );
+
+        $status = 'shipping';
+        $blocked = false;
+
+        try {
+            $service->confirmItemQuantity($full['order'], $first->id, 0);
+        } catch (RuntimeException $e) {
+            $blocked = strpos($e->getMessage(), 'new, updated та confirmed') !== false;
+        }
+
+        $this->assertTrue(
+            $blocked && $posts === 2,
+            'У shipping зміна кількості повинна блокуватися до POST.'
+        );
+
+        $this->line(
+            'OK: partial 200/warnings, всі products, TTN guard, confirmed edit, ' .
+            'no duplicate POST, shipping guard.'
+        );
     }
 
     private function testStatusPresenters()
