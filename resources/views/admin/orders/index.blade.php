@@ -618,23 +618,6 @@
                                 Коротко
                             </button>
 
-                            @if($showConfirmAll)
-                                <form
-                                    method="post"
-                                    action="{{ route('admin.orders.confirm-all', $order) }}"
-                                    class="my-1"
-                                    onsubmit="return confirm('Підтвердити зарезервовану кількість усіх товарів{{ $isRozetkaOrder ? ' у Rozetka' : '' }}?');"
-                                >
-                                    @csrf
-                                    <button
-                                        type="submit"
-                                        class="btn btn-sm btn-success"
-                                        @if($isRozetkaOrder && !config('services.rozetka.actions_enabled', false)) disabled @endif
-                                    >
-                                        Підтвердити всю кількість
-                                    </button>
-                                </form>
-                            @endif
                             
                         </td>
                     </tr>
@@ -653,6 +636,23 @@
                                         </span>
                                     </div>
 
+                                    @if($showConfirmAll)
+                                        <form
+                                            method="post"
+                                            action="{{ route('admin.orders.confirm-all', $order) }}"
+                                            class="my-1"
+                                            onsubmit="return confirm('Підтвердити зарезервовану кількість усіх товарів{{ $isRozetkaOrder ? ' у Rozetka' : '' }}?');"
+                                        >
+                                            @csrf
+                                            <button
+                                                type="submit"
+                                                class="btn btn-sm btn-success"
+                                                @if($isRozetkaOrder && !config('services.rozetka.actions_enabled', false)) disabled @endif
+                                            >
+                                                Підтвердити всю кількість
+                                            </button>
+                                        </form>
+                                    @endif
                                 </div>
 
                                 @if($order->items->isEmpty())
