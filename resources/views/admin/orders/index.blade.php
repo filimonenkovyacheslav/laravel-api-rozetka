@@ -650,7 +650,7 @@
                                             method="post"
                                             action="{{ route('admin.orders.confirm-all', $order) }}"
                                             class="my-1"
-                                            onsubmit="return confirm('Підтвердити зарезервовану кількість усіх товарів{{ $isRozetkaOrder ? ' у Rozetka' : '' }}?');"
+                                            onsubmit="return confirm('Підтвердити зміни кількості всіх товарів{{ $isRozetkaOrder ? ' у Rozetka' : '' }}?');"
                                         >
                                             @csrf
                                             <button
@@ -682,7 +682,7 @@
                                                         Кількість
                                                     </th>
                                                     <th class="text-right">
-                                                        Зарезервовано
+                                                        Підтверджена
                                                     </th>
                                                     <th class="text-right">
                                                         Ціна
