@@ -975,6 +975,7 @@ class RozetkaOrderService
                 return 'created';
 
             case 'shipping':
+            case 'shipped_from_rozetka':
                 return 'shipped';
 
             case 'closed':
