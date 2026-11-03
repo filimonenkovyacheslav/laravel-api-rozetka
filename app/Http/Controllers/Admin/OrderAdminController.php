@@ -450,10 +450,26 @@ class OrderAdminController extends Controller
             if (is_string($warning)) {
                 $messages[] = $warning;
             } elseif (is_array($warning)) {
-                $messages[] = json_encode(
-                    $warning,
-                    JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
-                );
+                $code = trim((string) (
+                    $warning['supplierCode'] ??
+                    $warning['productCode'] ??
+                    ''
+                ));
+                $message = trim((string) (
+                    $warning['message'] ??
+                    $warning['description'] ??
+                    $warning['text'] ??
+                    ''
+                ));
+
+                if ($message !== '') {
+                    $messages[] = ($code !== '' ? $code . ': ' : '') . $message;
+                } else {
+                    $messages[] = json_encode(
+                        $warning,
+                        JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+                    );
+                }
             }
         }
 
