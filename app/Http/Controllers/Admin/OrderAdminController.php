@@ -299,12 +299,12 @@ class OrderAdminController extends Controller
             !RozetkaStatusPresenter::canConfirm($order)
         ) {
             return redirect()->route('admin.orders.show', $order)
-                ->with('err', 'Резервування недоступне після створення ТТН.');
+                ->with('err', 'Зміна кількості недоступна після створення ТТН.');
         }
 
         if ($order->status === 'canceled') {
             return redirect()->route('admin.orders.show', $order)
-                ->with('err', 'Скасоване замовлення не можна резервувати.');
+                ->with('err', 'У скасованому замовленні не можна змінювати кількість.');
         }
 
         $data = $request->validate([
@@ -323,7 +323,7 @@ class OrderAdminController extends Controller
         return redirect()->route('admin.orders.show', $order)
             ->with(
                 'ok',
-                'Кількість зарезервовано локально. Для відправлення в Rozetka ' .
+                'Кількість змінено локально. Для відправлення змін у Rozetka ' .
                 'натисніть «Підтвердити всю кількість».'
             );
     }
@@ -373,8 +373,8 @@ class OrderAdminController extends Controller
                 ->with(
                     'ok',
                     $result !== null && !$result['performed']
-                        ? 'Зарезервовані кількості вже підтверджені в Rozetka.'
-                        : 'Зарезервовані кількості товарів підтверджено.'
+                        ? 'Зміни кількості вже підтверджено в Rozetka.'
+                        : 'Зміни кількості товарів підтверджено.'
                 );
 
             if ($result !== null &&

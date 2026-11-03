@@ -200,14 +200,14 @@
     <div class="card-header d-flex align-items-center justify-content-between flex-wrap">
         <div>
             <strong>Товари</strong>
-            <span class="text-muted ml-2">(спочатку резервуємо, потім підтверджуємо замовлення)</span>
+            <span class="text-muted ml-2">(спочатку змінюємо кількість, потім підтверджуємо замовлення)</span>
         </div>
         @if($showConfirmAll)
             <form
                 method="post"
                 action="{{ route('admin.orders.confirm-all', $order) }}"
                 class="my-1"
-                onsubmit="return confirm('Підтвердити зарезервовану кількість усіх товарів{{ $isRozetkaOrder ? ' у Rozetka' : '' }}?');"
+                onsubmit="return confirm('Підтвердити зміни кількості всіх товарів{{ $isRozetkaOrder ? ' у Rozetka' : '' }}?');"
             >
                 @csrf
                 <button
@@ -228,7 +228,7 @@
                 <th>Артикул (RZ)</th>
                 <th>Посилання (RZ)</th>
                 <th>Замовлена к-сть</th>
-                <th>Зарезервована к-сть</th>
+                <th>Підтверджена к-сть</th>
                 <th>Ціна</th>
                 <th></th>
             </tr>
@@ -262,7 +262,7 @@
                     </td>
                     <td class="text-right">
                         @if($canEditQuantities && $order->status !== 'canceled')
-                            <a class="btn btn-sm btn-outline-primary" href="{{ route('admin.items.edit', $it->id) }}">Зарезервувати</a>
+                            <a class="btn btn-sm btn-outline-primary" href="{{ route('admin.items.edit', $it->id) }}">Змінити</a>
                         @endif
                     </td>
                 </tr>

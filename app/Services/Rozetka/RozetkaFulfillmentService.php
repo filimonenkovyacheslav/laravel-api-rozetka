@@ -582,7 +582,7 @@ class RozetkaFulfillmentService
 
             if ($ordered < 1 || $reserved < 0 || $reserved > $ordered) {
                 throw new RuntimeException(
-                    'Некоректна зарезервована кількість товару ' .
+                    'Некоректна кількість товару ' .
                     $item->supplier_code . '.'
                 );
             }
