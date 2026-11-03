@@ -97,12 +97,24 @@ class Kernel extends ConsoleKernel
          * The command itself also checks both auto-TTN and actions
          * flags and records every attempted order durably.
          */
-        $schedule->command('rozetka:auto-ttn', [
+        $autoTtnOptions = [
             '--execute' => true,
             '--limit' => 20,
-        ])
+        ];
+
+        $canaryOrderId = (int) config(
+            'services.rozetka.auto_ttn_only_order_id',
+            0
+        );
+
+        if ($canaryOrderId > 0) {
+            $autoTtnOptions['--order-id'] = (string) $canaryOrderId;
+        }
+
+        $schedule->command('rozetka:auto-ttn', $autoTtnOptions)
             ->everyTenMinutes()
             ->withoutOverlapping(30)
+            ->appendOutputTo(storage_path('logs/rozetka-auto-ttn.log'))
             ->when(function () {
                 return (bool) config(
                     'services.rozetka.auto_ttn_enabled',
