@@ -43,6 +43,7 @@ class TestRozetkaAutoTtnFlow extends Command
         DB::beginTransaction();
 
         try {
+            $this->testSchedulerUsesBareExecuteFlag();
             $this->testDryRunAndSingleCreation();
             $this->testIncompleteQuantityExcluded();
             $this->testUnknownOutcomeNotRetried();
@@ -59,6 +60,37 @@ class TestRozetkaAutoTtnFlow extends Command
             DB::rollBack();
             config($previous);
         }
+    }
+
+    /**
+     * Regression: Laravel Scheduler must not pass --execute=1.
+     */
+    private function testSchedulerUsesBareExecuteFlag()
+    {
+        config(['services.rozetka.auto_ttn_only_order_id' => 549]);
+
+        $kernel = app(\\App\\Console\\Kernel::class);
+        $method = new \\ReflectionMethod($kernel, 'schedule');
+        $method->setAccessible(true);
+        $schedule = new \\Illuminate\\Console\\Scheduling\\Schedule();
+        $method->invoke($kernel, $schedule);
+
+        $matches = array_values(array_filter(
+            $schedule->events(),
+            function ($event) {
+                return strpos($event->command, 'rozetka:auto-ttn') !== false;
+            }
+        ));
+
+        $this->assertTrue(
+            count($matches) === 1 &&
+            preg_match('/(?:^|\\s)--execute(?:\\s|$)/', $matches[0]->command) === 1 &&
+            strpos($matches[0]->command, '--execute=') === false &&
+            strpos($matches[0]->command, '--order-id=549') !== false,
+            'Scheduled command must use a bare --execute flag and canary ID'
+        );
+
+        config(['services.rozetka.auto_ttn_only_order_id' => 0]);
     }
 
     private function makeOrder($suffix, $confirmedQuantity)
