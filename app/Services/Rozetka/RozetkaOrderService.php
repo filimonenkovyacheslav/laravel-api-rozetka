@@ -854,10 +854,20 @@ class RozetkaOrderService
                         : null;
 
                 if (!$hadLocalReservationDraft) {
+                    // New/updated orders default to the full ordered
+                    // quantity until the manager explicitly reserves less.
+                    // Confirmed orders keep the remotely accepted quantity
+                    // as their baseline for later amendments.
                     $item->reserved_quantity =
-                        $item->confirmed_quantity !== null
-                            ? (int) $item->confirmed_quantity
-                            : $quantity;
+                        in_array(
+                            (string) $order->rozetka_status,
+                            ['new', 'updated'],
+                            true
+                        )
+                            ? $quantity
+                            : ($item->confirmed_quantity !== null
+                                ? (int) $item->confirmed_quantity
+                                : $quantity);
                 }
             } elseif ($isNewItem) {
                 $item->confirmed_quantity = null;
