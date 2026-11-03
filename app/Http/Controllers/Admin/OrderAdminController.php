@@ -329,7 +329,7 @@ class OrderAdminController extends Controller
     }
 
     /**
-     * Confirm all ordered quantities for a single order.
+     * Submit the locally reserved quantities of every product.
      * New Supplier API orders call Rozetka; legacy orders remain local.
      */
     public function confirmAllQuantities(
@@ -373,8 +373,8 @@ class OrderAdminController extends Controller
                 ->with(
                     'ok',
                     $result !== null && !$result['performed']
-                        ? 'Вся кількість уже підтверджена.'
-                        : 'Кількість товарів підтверджено.'
+                        ? 'Зарезервовані кількості вже підтверджені в Rozetka.'
+                        : 'Зарезервовані кількості товарів підтверджено.'
                 );
 
             if ($result !== null &&
