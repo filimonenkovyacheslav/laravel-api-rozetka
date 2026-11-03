@@ -1202,6 +1202,11 @@ class TestRozetkaHttpFlow extends Command
             $secondCode => null,
         ];
 
+        $remoteSerials = [
+            $firstCode => [],
+            $secondCode => [],
+        ];
+
         $posts = 0;
         $gets = 0;
         $postPayloads = [];
@@ -1214,6 +1219,7 @@ class TestRozetkaHttpFlow extends Command
             $secondCode,
             &$status,
             &$remoteValues,
+            &$remoteSerials,
             &$posts,
             &$gets,
             &$postPayloads
@@ -1240,14 +1246,14 @@ class TestRozetkaHttpFlow extends Command
                         'rzCode' => (int) $this->rzCode,
                         'quantity' => 1,
                         'confirmedQuantity' => $remoteValues[$firstCode],
-                        'serialNumbers' => [],
+                        'serialNumbers' => $remoteSerials[$firstCode],
                     ],
                     [
                         'supplierCode' => $secondCode,
                         'rzCode' => (int) $this->rzCode,
                         'quantity' => 2,
                         'confirmedQuantity' => $remoteValues[$secondCode],
-                        'serialNumbers' => [],
+                        'serialNumbers' => $remoteSerials[$secondCode],
                     ],
                 ];
 
@@ -1269,8 +1275,18 @@ class TestRozetkaHttpFlow extends Command
                 );
 
                 foreach ($products as $product) {
-                    $remoteValues[$product['supplierCode']] =
-                        (int) $product['confirmedQuantity'];
+                    $code = $product['supplierCode'];
+                    $newQuantity = (int) $product['confirmedQuantity'];
+
+                    // Simulate Rozetka clearing SN when the quantity changes.
+                    if (
+                        $remoteValues[$code] !== null &&
+                        (int) $remoteValues[$code] !== $newQuantity
+                    ) {
+                        $remoteSerials[$code] = [];
+                    }
+
+                    $remoteValues[$code] = $newQuantity;
                 }
 
                 $status = 'confirmed';
@@ -1342,6 +1358,10 @@ class TestRozetkaHttpFlow extends Command
             'Неповне confirmedQuantity повинно блокувати створення ТТН.'
         );
 
+        // Simulate serials saved on a fully confirmed item by another
+        // operator. Changing its quantity must clear these SNs.
+        $remoteSerials[$secondCode] = ['SN-001', 'SN-002'];
+
         // A second partial change in confirmed should return two warnings.
         $partialAgain = $service->confirmItemQuantity(
             $partial['order'],
@@ -1357,6 +1377,16 @@ class TestRozetkaHttpFlow extends Command
             (int) $postPayloads[1][0]['confirmedQuantity'] === 0 &&
             (int) $postPayloads[1][1]['confirmedQuantity'] === 1,
             'Кожен недопідтверджений товар повинен мати warning.'
+        );
+
+        $this->assertTrue(
+            ($postPayloads[1][1]['serialNumbers'] ?? null) === [] &&
+            json_decode(
+                (string) $partialAgain['order']->items
+                    ->firstWhere('supplier_code', $secondCode)->serial_number,
+                true
+            ) === [],
+            'Зміна кількості має скидати наявні серійні номери.'
         );
 
         // Even confirmed orders allow quantity changes before TTN.
