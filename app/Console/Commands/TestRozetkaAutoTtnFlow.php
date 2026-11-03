@@ -69,10 +69,10 @@ class TestRozetkaAutoTtnFlow extends Command
     {
         config(['services.rozetka.auto_ttn_only_order_id' => 549]);
 
-        $kernel = app(\\App\\Console\\Kernel::class);
-        $method = new \\ReflectionMethod($kernel, 'schedule');
+        $kernel = app(\App\Console\Kernel::class);
+        $method = new \ReflectionMethod($kernel, 'schedule');
         $method->setAccessible(true);
-        $schedule = new \\Illuminate\\Console\\Scheduling\\Schedule();
+        $schedule = new \Illuminate\Console\Scheduling\Schedule();
         $method->invoke($kernel, $schedule);
 
         $matches = array_values(array_filter(
@@ -84,7 +84,7 @@ class TestRozetkaAutoTtnFlow extends Command
 
         $this->assertTrue(
             count($matches) === 1 &&
-            preg_match('/(?:^|\\s)--execute(?:\\s|$)/', $matches[0]->command) === 1 &&
+            preg_match('/(?:^|\s)--execute(?:\s|$)/', $matches[0]->command) === 1 &&
             strpos($matches[0]->command, '--execute=') === false &&
             strpos($matches[0]->command, '--order-id=549') !== false,
             'Scheduled command must use a bare --execute flag and canary ID'
