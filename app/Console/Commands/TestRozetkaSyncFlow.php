@@ -929,7 +929,8 @@ class TestRozetkaSyncFlow extends Command
             'Чернетка кількості втрачена у confirmed.'
         );
 
-        // With no pending draft, the remote value can update both.
+        // With no pending draft, confirmed orders adopt remote changes.
+        $order->update(['rozetka_status' => 'confirmed']);
         $item->update(['reserved_quantity' => 3]);
         $product['confirmedQuantity'] = 4;
 
@@ -952,7 +953,25 @@ class TestRozetkaSyncFlow extends Command
             'Не оновлено резерв без локальних змін.'
         );
 
-        $this->line('OK: чернетки зберігаються, а не змінені значення синхронізуються.');
+        // An updated order should default to its full ordered quantity.
+        $order->update(['rozetka_status' => 'updated']);
+        $product['confirmedQuantity'] = 4;
+
+        $syncItems->invoke(
+            app(RozetkaOrderService::class),
+            $order,
+            [$product]
+        );
+
+        $item->refresh();
+
+        $this->assertSame(
+            5,
+            (int) $item->reserved_quantity,
+            'Для updated замовлення резерв за замовчуванням повинен дорівнювати замовленому.'
+        );
+
+        $this->line('OK: чернетки зберігаються, new/updated за замовчуванням резервують всю кількість.');
     }
 
     /**
