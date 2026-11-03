@@ -499,6 +499,87 @@ class RozetkaFulfillmentService
     }
 
     /**
+     * Confirm every ordered item in the actual Rozetka API.
+     *
+     * This is an order-level POST; individual quantity editing only
+     * stages values locally until this action.
+     *
+     * Always GET first: the order may have been confirmed by another
+     * operator. Never repeat a confirm for a completed order.
+     */
+    public function confirmFullOrder(Order $order)
+    {
+        $this->ensureActionsEnabled();
+
+        $order = $this->refreshFromApi($order);
+
+        if (
+            !in_array(
+                trim((string) $order->rozetka_status),
+                ['new', 'updated'],
+                true
+            ) ||
+            trim((string) $order->tracking_number) !== ''
+        ) {
+            throw new RuntimeException(
+                'Замовлення вже підтверджене або його статус ' .
+                'не дозволяє підтвердження.'
+            );
+        }
+
+        if ($order->items->isEmpty()) {
+            throw new RuntimeException('У замовленні немає товарів.');
+        }
+
+        foreach ($order->items as $item) {
+            $quantity = (int) $item->quantity;
+
+            if ($quantity < 1) {
+                throw new RuntimeException(
+                    'Неможливо підтвердити некоректну кількість товару ' .
+                    $item->supplier_code . '.'
+                );
+            }
+
+            /*
+             * Override only the in-memory values used by
+             * buildConfirmPayload; never persist an unconfirmed
+             * quantity before the remote API confirms it.
+             */
+            $item->reserved_quantity = $quantity;
+        }
+
+        $this->confirmOrder($order);
+
+        /*
+         * Read the accepted result from Rozetka, rather than
+         * assuming the POST response contains every product.
+         */
+        $order = $this->refreshFromApi($order);
+
+        if ((string) $order->rozetka_status !== 'confirmed') {
+            throw new RuntimeException(
+                'Rozetka не підтвердила замовлення: ' .
+                ($order->rozetka_status ?: 'статус відсутній') . '.'
+            );
+        }
+
+        foreach ($order->items as $item) {
+            if (
+                $item->confirmed_quantity === null ||
+                (int) $item->confirmed_quantity !== (int) $item->quantity
+            ) {
+                throw new RuntimeException(
+                    'Rozetka не підтвердила всю кількість товару ' .
+                    $item->supplier_code . '.'
+                );
+            }
+        }
+
+        return $order;
+    }
+
+    /**
      * Сформировать cargoSeats из наших габаритов.
      *
      * Один ProductDimensionPlace = одно место.
