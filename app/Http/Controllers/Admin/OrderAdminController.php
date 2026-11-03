@@ -286,11 +286,12 @@ class OrderAdminController extends Controller
         return view('admin.order_items.edit', compact('item', 'order'));
     }
 
-    public function updateItem(
-        Request $request,
-        OrderItem $item,
-        RozetkaFulfillmentService $fulfillmentService
-    ) {
+    /**
+     * Editing an item only stages a local reserved quantity.
+     * The Rozetka API is called exclusively by confirmAllQuantities().
+     */
+    public function updateItem(Request $request, OrderItem $item)
+    {
         $order = Order::findOrFail($item->order_id);
 
         if (
@@ -298,7 +299,12 @@ class OrderAdminController extends Controller
             !RozetkaStatusPresenter::canConfirm($order)
         ) {
             return redirect()->route('admin.orders.show', $order)
-                ->with('err', 'Зміна кількості недоступна після створення ТТН.');
+                ->with('err', 'Резервування недоступне після створення ТТН.');
+        }
+
+        if ($order->status === 'canceled') {
+            return redirect()->route('admin.orders.show', $order)
+                ->with('err', 'Скасоване замовлення не можна резервувати.');
         }
 
         $data = $request->validate([
@@ -310,52 +316,16 @@ class OrderAdminController extends Controller
             ],
         ]);
 
-        if (!$this->isNewRozetkaOrder($order)) {
-            $item->update([
-                'reserved_quantity' => $data['reserved_quantity'],
-            ]);
+        $item->update([
+            'reserved_quantity' => (int) $data['reserved_quantity'],
+        ]);
 
-            return redirect()->route('admin.orders.show', $order)
-                ->with('ok', 'Підтверджену кількість збережено.');
-        }
-
-        try {
-            $result = $fulfillmentService->confirmItemQuantity(
-                $order,
-                $item->id,
-                (int) $data['reserved_quantity']
+        return redirect()->route('admin.orders.show', $order)
+            ->with(
+                'ok',
+                'Кількість зарезервовано локально. Для відправлення в Rozetka ' .
+                'натисніть «Підтвердити всю кількість».'
             );
-
-            $redirect = redirect()->route('admin.orders.show', $order)
-                ->with(
-                    'ok',
-                    $result['performed']
-                        ? 'Кількість підтверджено в Rozetka.'
-                        : 'Кількість уже підтверджена в Rozetka.'
-                );
-
-            if ($result['partial']) {
-                $redirect->with(
-                    'warn',
-                    $this->confirmationWarnings($result['warnings'], true)
-                );
-            } elseif (!empty($result['warnings'])) {
-                $redirect->with(
-                    'warn',
-                    $this->confirmationWarnings($result['warnings'], false)
-                );
-            }
-
-            return $redirect;
-        } catch (Throwable $e) {
-            report($e);
-
-            return redirect()->route('admin.orders.show', $order)
-                ->with(
-                    'err',
-                    'Помилка підтвердження Rozetka: ' . $e->getMessage()
-                );
-        }
     }
 
     /**
