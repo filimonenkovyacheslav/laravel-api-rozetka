@@ -85,6 +85,13 @@ return [
             'ROZETKA_AUTO_TTN_LOOKBACK_DAYS',
             14
         ),
+
+        // Optional production canary: process only this order ID until
+        // automatic scheduling has been verified. Zero disables the scope.
+        'auto_ttn_only_order_id' => (int) env(
+            'ROZETKA_AUTO_TTN_ONLY_ORDER_ID',
+            0
+        ),
     ],
 
     'nova_poshta' => [
