@@ -40,6 +40,16 @@
     @if(session('err'))
         <div class="alert alert-danger">{{ session('err') }}</div>
     @endif
+    @if(session('warn'))
+        <div class="alert alert-warning">
+            <strong>Попередження Rozetka:</strong>
+            <ul class="mb-0">
+                @foreach((array) session('warn') as $warning)
+                    <li>{{ $warning }}</li>
+                @endforeach
+            </ul>
+        </div>
+    @endif
     @if ($errors->any())
         <div class="alert alert-danger">
             <div class="font-weight-bold mb-2">Validation errors:</div>
