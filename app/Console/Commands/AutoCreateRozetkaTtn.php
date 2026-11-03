@@ -69,7 +69,16 @@ class AutoCreateRozetkaTtn extends Command
             ->whereDoesntHave('ttnBatchEntries');
 
         if ($id !== null) {
+            // Explicit investigation of a known order, regardless of age.
             $query->whereKey((int) $id);
+        } else {
+            // Avoid unexpectedly shipping stale confirmed orders when
+            // this feature is first enabled on an existing installation.
+            $lookbackDays = max(
+                1,
+                (int) config('services.rozetka.auto_ttn_lookback_days', 14)
+            );
+            $query->where('created_at', '>=', now()->subDays($lookbackDays));
         }
 
         $orders = $query->orderBy('id')->limit($limit)->get();
