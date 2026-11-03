@@ -1342,47 +1342,76 @@ class TestRozetkaHttpFlow extends Command
             'Неповне confirmedQuantity повинно блокувати створення ТТН.'
         );
 
+        // A second partial change in confirmed should return two warnings.
+        $partialAgain = $service->confirmItemQuantity(
+            $partial['order'],
+            $second->id,
+            1
+        );
+
+        $this->assertTrue(
+            $partialAgain['performed'] === true &&
+            $partialAgain['partial'] === true &&
+            count($partialAgain['warnings']) === 2 &&
+            $posts === 2 &&
+            (int) $postPayloads[1][0]['confirmedQuantity'] === 0 &&
+            (int) $postPayloads[1][1]['confirmedQuantity'] === 1,
+            'Кожен недопідтверджений товар повинен мати warning.'
+        );
+
         // Even confirmed orders allow quantity changes before TTN.
-        $full = $service->confirmFullOrder($partial['order']);
+        $full = $service->confirmFullOrder($partialAgain['order']);
 
         $this->assertTrue(
             $full['performed'] === true &&
             $full['partial'] === false &&
-            $posts === 2 &&
-            (int) $postPayloads[1][0]['confirmedQuantity'] === 1 &&
-            (int) $postPayloads[1][1]['confirmedQuantity'] === 2,
+            $posts === 3 &&
+            (int) $postPayloads[2][0]['confirmedQuantity'] === 1 &&
+            (int) $postPayloads[2][1]['confirmedQuantity'] === 2,
             'confirmed має дозволяти допідтвердження до повної кількості.'
         );
 
         $this->assertTrue(
-            ($postPayloads[1][0]['serialNumbers'] ?? null) === [],
+            ($postPayloads[2][0]['serialNumbers'] ?? null) === [] &&
+            ($postPayloads[2][1]['serialNumbers'] ?? null) === [],
             'Зміна підтвердженої кількості повинна скидати серійні номери.'
         );
 
         // Reconfirming unchanged quantities must not emit another POST.
         $noop = $service->confirmFullOrder($full['order']);
         $this->assertTrue(
-            $noop['performed'] === false && $posts === 2,
+            $noop['performed'] === false && $posts === 3,
             'Незмінне confirmed не повинно створювати додатковий POST.'
+        );
+
+        // After an external update even already full quantities need POST.
+        $status = 'updated';
+        $updated = $service->confirmFullOrder($full['order']);
+
+        $this->assertTrue(
+            $updated['performed'] === true &&
+            $updated['partial'] === false &&
+            $posts === 4,
+            'Статус updated повинен дозволяти повторне підтвердження.'
         );
 
         $status = 'shipping';
         $blocked = false;
 
         try {
-            $service->confirmItemQuantity($full['order'], $first->id, 0);
+            $service->confirmItemQuantity($updated['order'], $first->id, 0);
         } catch (RuntimeException $e) {
             $blocked = strpos($e->getMessage(), 'new, updated та confirmed') !== false;
         }
 
         $this->assertTrue(
-            $blocked && $posts === 2,
+            $blocked && $posts === 4,
             'У shipping зміна кількості повинна блокуватися до POST.'
         );
 
         $this->line(
-            'OK: partial 200/warnings, всі products, TTN guard, confirmed edit, ' .
-            'no duplicate POST, shipping guard.'
+            'OK: partial 200/warnings per product, всі products, TTN guard, ' .
+            'confirmed/updated edits, no duplicate POST, shipping guard.'
         );
     }
 
