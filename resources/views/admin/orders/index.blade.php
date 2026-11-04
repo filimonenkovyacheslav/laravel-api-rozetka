@@ -29,6 +29,14 @@
         color: #fff !important;
     }
 
+    /* Preserve the red cash-on-delivery highlight and white text on hover.
+       Bootstrap's .table-hover overrides the row background otherwise. */
+    .orders-list-table.table-hover tbody tr.tr-danger:hover,
+    .orders-list-table.table-hover tbody tr.tr-danger:hover > td {
+        background-color: #f57c73 !important;
+        color: #fff !important;
+    }
+
     .orders-table-wrapper {
         max-height: calc(100vh - 420px);
         overflow: auto;
@@ -568,7 +576,7 @@
                                     method="post"
                                     action="{{ route('admin.orders.ttn.reissue', $order) }}"
                                     class="d-inline-block ml-1 my-1"
-                                    onsubmit="return confirm('Перевипустити ТТН без зміни даних? Поточну накладну буде замінено через Rozetka. Продовжити?');"
+                                    onsubmit="return confirm('Перевипустити ТТН. Продовжити?');"
                                 >
                                     @csrf
                                     <button
