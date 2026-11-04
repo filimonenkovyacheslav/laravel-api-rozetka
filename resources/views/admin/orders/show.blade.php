@@ -101,7 +101,7 @@
                             method="post"
                             action="{{ route('admin.orders.ttn.reissue', $order) }}"
                             class="d-inline-block ml-2"
-                            onsubmit="return confirm('Перевипустити ТТН без зміни даних? Поточну накладну буде замінено через Rozetka. Продовжити?');"
+                            onsubmit="return confirm('Перевипустити ТТН. Продовжити?');"
                         >
                             @csrf
                             <button
