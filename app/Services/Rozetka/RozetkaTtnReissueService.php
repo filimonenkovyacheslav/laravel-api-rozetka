@@ -71,7 +71,7 @@ class RozetkaTtnReissueService
                 ->exists()
             ) {
                 throw new RuntimeException(
-                    'Перевипуск цієї ТТН уже виконувався. ' .
+                    'Перевипуск цієї ТТН вже виконувався. ' .
                     'Перед повторною дією перевірте замовлення в Rozetka.'
                 );
             }
@@ -111,7 +111,7 @@ class RozetkaTtnReissueService
 
             if (!$inserted) {
                 throw new RuntimeException(
-                    'Перевипуск цієї ТТН уже виконувався. ' .
+                    'Перевипуск цієї ТТН вже виконувався. ' .
                     'Перед повторною дією перевірте замовлення в Rozetka.'
                 );
             }
