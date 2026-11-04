@@ -525,14 +525,22 @@ class TestRozetkaHttpFlow extends Command
         );
 
         $blocked = false;
+        $replayError = '';
+        $callsBeforeReplay = count($calls);
         try {
             $service->reissue($staleDbOrder);
         } catch (RuntimeException $e) {
-            $blocked = strpos($e->getMessage(), 'вже виконувався') !== false;
+            $replayError = $e->getMessage();
+            $blocked = strpos($replayError, 'вже виконувався') !== false;
         }
         $this->assertTrue(
             $blocked,
-            'Повторний перевипуск не зупинено записом журналу спроб.'
+            'Повторний перевипуск не зупинено записом журналу спроб. ' .
+            'Фактична причина: ' . ($replayError ?: '(виняток не виник)')
+        );
+        $this->assertTrue(
+            count($calls) === $callsBeforeReplay,
+            'Повторний перевипуск не повинен виконувати HTTP-запити.'
         );
         $this->assertTrue(
             count(array_filter($calls, function ($v) {
