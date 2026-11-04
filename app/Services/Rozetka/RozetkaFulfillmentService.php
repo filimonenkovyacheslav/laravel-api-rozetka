@@ -35,13 +35,17 @@ class RozetkaFulfillmentService
      * @param Order $order
      * @return Order
      */
-    public function refreshFromApi(Order $order)
+    public function refreshFromApi(Order $order, &$sourceDetail = null)
     {
         $orderId = $this->getOrderId($order);
 
         $detail = $this->client->getOrder(
             $orderId
         );
+
+        // Reissue must validate the *remote* tracking status from
+        // this same GET, not merely a stale local status.
+        $sourceDetail = $detail;
 
         DB::transaction(function () use (
             $order,
