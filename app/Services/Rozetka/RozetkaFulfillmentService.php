@@ -884,7 +884,8 @@ class RozetkaFulfillmentService
      */
     public function createTtn(
         Order $order,
-        $replaceExisting = false
+        $replaceExisting = false,
+        $cargoSeatsOverride = null
     ) {
         $this->ensureActionsEnabled();
 
@@ -929,6 +930,15 @@ class RozetkaFulfillmentService
             );
         }
 
+        if (
+            $replaceExisting &&
+            trim((string) $order->tracking_number) === ''
+        ) {
+            throw new RuntimeException(
+                'Неможливо перевипустити ТТН: у замовленні немає накладної.'
+            );
+        }
+
         $this->assertUzdReadyForTtn($order);
 
         $this->validateSerialNumbersForTtn(
@@ -939,10 +949,15 @@ class RozetkaFulfillmentService
          * Payload для создания ТТН формируем
          * из наших локальных ProductDimension.
          */
-        $cargoSeats =
-            $this->buildCargoSeats(
-                $order
+        $cargoSeats = $cargoSeatsOverride !== null
+            ? $cargoSeatsOverride
+            : $this->buildCargoSeats($order);
+
+        if (!is_array($cargoSeats) || empty($cargoSeats)) {
+            throw new RuntimeException(
+                'Неможливо створити ТТН без cargoSeats.'
             );
+        }
 
         $response =
             $this->client->createTtn(
