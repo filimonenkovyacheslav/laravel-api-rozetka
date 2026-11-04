@@ -505,20 +505,35 @@ class TestRozetkaHttpFlow extends Command
             'Очікувався рівно один replaceExisting POST.'
         );
 
-        // Simulate an old/stale local state: the attempt journal must
-        // prevent a second POST for the same previous TTN.
-        $order->update([
+        // Simulate a stale DB state after a successful replacement.
+        // The reissue service saves a separate, freshly loaded Eloquent
+        // instance. $order still holds the old number and code 1 in
+        // memory, so $order->update([...]) would be a NO-OP.
+        // Reload first, then deliberately roll back only the local
+        // tracking fields to exercise the unique attempt guard.
+        $staleDbOrder = $order->fresh(['items']);
+        $staleDbOrder->update([
             'tracking_number' => $oldNumber,
             'tracking_status_code' => 1,
         ]);
+        $staleDbOrder = $staleDbOrder->fresh(['items']);
+
+        $this->assertTrue(
+            $staleDbOrder->tracking_number === $oldNumber &&
+            (int) $staleDbOrder->tracking_status_code === 1,
+            'Тест не відновив попередню ТТН та код 1 у базі.'
+        );
 
         $blocked = false;
         try {
-            $service->reissue($order->fresh(['items']));
+            $service->reissue($staleDbOrder);
         } catch (RuntimeException $e) {
             $blocked = strpos($e->getMessage(), 'вже виконувався') !== false;
         }
-        $this->assertTrue($blocked, 'Повторний POST ТТН не заблоковано.');
+        $this->assertTrue(
+            $blocked,
+            'Повторний перевипуск не зупинено записом журналу спроб.'
+        );
         $this->assertTrue(
             count(array_filter($calls, function ($v) {
                 return $v[0] === 'POST';
