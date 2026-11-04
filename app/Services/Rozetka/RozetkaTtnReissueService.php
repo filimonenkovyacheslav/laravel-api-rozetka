@@ -61,6 +61,21 @@ class RozetkaTtnReissueService
 
         try {
             $previousNumber = trim((string) $order->tracking_number);
+
+            // Short-circuit repeated clicks before any external GET.
+            // Keep the unique DB constraint / insertOrIgnore below as
+            // protection against concurrent requests and process crashes.
+            if (RozetkaTtnReissueAttempt::query()
+                ->where('order_id', $order->id)
+                ->where('old_tracking_number', $previousNumber)
+                ->exists()
+            ) {
+                throw new RuntimeException(
+                    'Перевипуск цієї ТТН уже виконувався. ' .
+                    'Перед повторною дією перевірте замовлення в Rozetka.'
+                );
+            }
+
             $detail = null;
             $order = $this->fulfillment->refreshFromApi($order, $detail);
 
