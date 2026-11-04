@@ -35,13 +35,17 @@ class RozetkaFulfillmentService
      * @param Order $order
      * @return Order
      */
-    public function refreshFromApi(Order $order)
+    public function refreshFromApi(Order $order, &$sourceDetail = null)
     {
         $orderId = $this->getOrderId($order);
 
         $detail = $this->client->getOrder(
             $orderId
         );
+
+        // Reissue must validate the *remote* tracking status from
+        // this same GET, not merely a stale local status.
+        $sourceDetail = $detail;
 
         DB::transaction(function () use (
             $order,
@@ -880,7 +884,8 @@ class RozetkaFulfillmentService
      */
     public function createTtn(
         Order $order,
-        $replaceExisting = false
+        $replaceExisting = false,
+        $cargoSeatsOverride = null
     ) {
         $this->ensureActionsEnabled();
 
@@ -925,6 +930,15 @@ class RozetkaFulfillmentService
             );
         }
 
+        if (
+            $replaceExisting &&
+            trim((string) $order->tracking_number) === ''
+        ) {
+            throw new RuntimeException(
+                'Неможливо перевипустити ТТН: у замовленні немає накладної.'
+            );
+        }
+
         $this->assertUzdReadyForTtn($order);
 
         $this->validateSerialNumbersForTtn(
@@ -935,10 +949,15 @@ class RozetkaFulfillmentService
          * Payload для создания ТТН формируем
          * из наших локальных ProductDimension.
          */
-        $cargoSeats =
-            $this->buildCargoSeats(
-                $order
+        $cargoSeats = $cargoSeatsOverride !== null
+            ? $cargoSeatsOverride
+            : $this->buildCargoSeats($order);
+
+        if (!is_array($cargoSeats) || empty($cargoSeats)) {
+            throw new RuntimeException(
+                'Неможливо створити ТТН без cargoSeats.'
             );
+        }
 
         $response =
             $this->client->createTtn(

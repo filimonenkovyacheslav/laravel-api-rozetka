@@ -13,6 +13,7 @@ use App\Services\NovaPoshta\NovaPoshtaTtnService;
 use Throwable;
 use App\Models\ProductDimension;
 use App\Services\Rozetka\RozetkaFulfillmentService;
+use App\Services\Rozetka\RozetkaTtnReissueService;
 use App\Support\RozetkaStatusPresenter;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
@@ -462,6 +463,35 @@ class OrderAdminController extends Controller
         $file->delete();
 
         return back()->with('ok', 'File deleted');
+    }
+
+    /**
+     * Explicit Rozetka TTN reissue. This action never creates a
+     * shipment for an order without a previous TTN.
+     */
+    public function reissueRozetkaTtn(
+        Order $order,
+        RozetkaTtnReissueService $reissueService
+    ) {
+        try {
+            $result = $reissueService->reissue($order);
+
+            return back()->with(
+                'ok',
+                'ТТН успішно перевипущено через Rozetka. ' .
+                'Актуальний номер: ' . $result['tracking_number'] . '.'
+            );
+        } catch (Throwable $e) {
+            report($e);
+
+            return back()->with(
+                'err',
+                'Не вдалося перевипустити ТТН: ' .
+                $e->getMessage() .
+                ' Якщо результат запиту невідомий, не повторюйте операцію ' .
+                'до перевірки в Rozetka та Новій Пошті.'
+            );
+        }
     }
 
     public function deleteTtn(

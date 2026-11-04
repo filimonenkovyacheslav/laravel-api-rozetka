@@ -36,6 +36,12 @@ Route::middleware(['web', 'admin.basic'])->prefix('admin')->name('admin.')->grou
         [OrderRozetkaMarkingController::class, 'download']
     )->name('orders.rozetka-marking');
 
+    // Manual TTN reissue for Rozetka orders at NP status code 1 only.
+    Route::post(
+        '/orders/{order}/ttn/reissue',
+        [OrderAdminController::class, 'reissueRozetkaTtn']
+    )->name('orders.ttn.reissue');
+
     // Edit order details
     Route::get('/orders/{order}/edit', [OrderAdminController::class, 'edit'])->name('orders.edit');
     Route::post('/orders/{order}', [OrderAdminController::class, 'update'])->name('orders.update');

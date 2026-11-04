@@ -4,6 +4,8 @@ namespace App\Console\Commands;
 
 use App\Models\Order;
 use App\Services\OrderTtnService;
+use App\Services\Rozetka\RozetkaTtnReissueService;
+use App\Models\RozetkaTtnReissueAttempt;
 use App\Services\Rozetka\RozetkaApiException;
 use Illuminate\Console\Command;
 use Illuminate\Http\Client\Request as HttpRequest;
@@ -66,6 +68,14 @@ class TestRozetkaHttpFlow extends Command
                 'Тест 1.1: new/updated вимагають явного підтвердження до ТТН'
             );
             $this->testTtnRequiresConfirmation();
+
+            $this->newLine();
+            $this->info('Тест 1.2: перевипуск ТТН лише при коді 1');
+            $this->testTtnReissue();
+
+            $this->newLine();
+            $this->info('Тест 1.3: невизначений результат перевипуску не повторюємо');
+            $this->testTtnReissueUnknownResult();
 
             $this->newLine();
 
@@ -394,6 +404,222 @@ class TestRozetkaHttpFlow extends Command
         }
 
         $this->line('OK: new/updated блокуються до явного підтвердження.');
+    }
+
+    /**
+     * GET must confirm that the NP code is still 1 and that the
+     * existing TTN number has not changed. Exactly one replacement
+     * POST is permitted for a given old TTN.
+     */
+    private function testTtnReissue()
+    {
+        $order = $this->createTestOrder('shipping', 1, 'REISSUE');
+        $oldNumber = '20400000002001';
+        $newNumber = '20400000002002';
+        $order->update([
+            'uzd_status' => 'verified',
+            'tracking_number' => $oldNumber,
+            'tracking_status_code' => 1,
+            'tracking_status' => 'Накладна створена',
+        ]);
+        $order = $order->fresh(['items']);
+        $service = app(RozetkaTtnReissueService::class);
+
+        $this->assertTrue(
+            RozetkaTtnReissueService::canReissue($order),
+            'Код 1 повинен дозволяти перевипуск.'
+        );
+
+        $calls = [];
+        Http::swap(new HttpFactory());
+        Http::fake(function (HttpRequest $request) use (
+            $order,
+            $oldNumber,
+            $newNumber,
+            &$calls
+        ) {
+            $path = $this->getPath($request);
+            $method = $request->method();
+            $calls[] = [$method, $path];
+
+            if ($method === 'GET' &&
+                $path === '/dropshipping/orders/' . $order->guid
+            ) {
+                $detail = $this->makeOrderResponse(
+                    $order->guid,
+                    $order->items->first()->supplier_code,
+                    'shipping',
+                    1,
+                    $oldNumber
+                );
+                $detail['trackingStatusCode'] = 1;
+                return Http::response($detail, 200);
+            }
+
+            if ($method === 'POST' &&
+                $path === '/dropshipping/orders/ttn/' . $order->guid
+            ) {
+                $body = $request->data();
+                $this->assertTrue(
+                    ($body['replaceExisting'] ?? false) === true &&
+                    ($body['deliveryService'] ?? '') === 'nova_poshta' &&
+                    !empty($body['cargoSeats']),
+                    'Повинен бути один POST із replaceExisting=true і cargoSeats.'
+                );
+
+                return Http::response([
+                    'orderId' => $order->guid,
+                    'orderStatus' => 'shipping',
+                    'ttn' => $newNumber,
+                ], 200);
+            }
+
+            throw new RuntimeException('Unexpected HTTP: ' . $method . ' ' . $path);
+        });
+
+        $result = $service->reissue($order);
+
+        $attempt = RozetkaTtnReissueAttempt::query()
+            ->where('order_id', $order->id)
+            ->where('old_tracking_number', $oldNumber)
+            ->first();
+
+        $this->assertTrue(
+            $result['tracking_number'] === $newNumber &&
+            $order->fresh()->tracking_number === $newNumber &&
+            $order->fresh()->tracking_status_code === null &&
+            $attempt &&
+            $attempt->status === 'success' &&
+            $attempt->new_tracking_number === $newNumber &&
+            count($attempt->cargo_seats) === 1,
+            'Результат перевипуску не збережений.'
+        );
+        $this->assertTrue(
+            $this->countCalls(
+                array_map(function ($v) {
+                    return ['method' => $v[0], 'path' => $v[1]];
+                }, $calls),
+                'POST',
+                '/dropshipping/orders/ttn/' . $order->guid
+            ) === 1,
+            'Очікувався рівно один replaceExisting POST.'
+        );
+
+        // Simulate an old/stale local state: the attempt journal must
+        // prevent a second POST for the same previous TTN.
+        $order->update([
+            'tracking_number' => $oldNumber,
+            'tracking_status_code' => 1,
+        ]);
+
+        $blocked = false;
+        try {
+            $service->reissue($order->fresh(['items']));
+        } catch (RuntimeException $e) {
+            $blocked = strpos($e->getMessage(), 'вже виконувався') !== false;
+        }
+        $this->assertTrue($blocked, 'Повторний POST ТТН не заблоковано.');
+        $this->assertTrue(
+            count(array_filter($calls, function ($v) {
+                return $v[0] === 'POST';
+            })) === 1,
+            'Перевипуск не повинен повторити POST для тієї ж ТТН.'
+        );
+
+        $order->update(['tracking_status_code' => 2]);
+        $this->assertTrue(
+            !RozetkaTtnReissueService::canReissue($order),
+            'Кнопка не повинна з’являтись при коді 2.'
+        );
+        $blocked = false;
+        try {
+            $service->reissue($order->fresh(['items']));
+        } catch (RuntimeException $e) {
+            $blocked = true;
+        }
+        $this->assertTrue($blocked, 'Перевипуск при коді 2 не заблоковано.');
+
+        $this->line('OK: код 1, replaceExisting, одна спроба, захист від повторів і коду 2.');
+    }
+
+    /**
+     * Reissue must be held for manual review if POST may have
+     * succeeded remotely despite an HTTP 500 error.
+     */
+    private function testTtnReissueUnknownResult()
+    {
+        $order = $this->createTestOrder('shipping', 1, 'REISSUE-500');
+        $oldNumber = '20400000002101';
+
+        $order->update([
+            'uzd_status' => 'verified',
+            'tracking_number' => $oldNumber,
+            'tracking_status_code' => 1,
+        ]);
+        $order = $order->fresh(['items']);
+        $posts = 0;
+
+        Http::swap(new HttpFactory());
+        Http::fake(function (HttpRequest $request) use (
+            $order,
+            $oldNumber,
+            &$posts
+        ) {
+            $path = $this->getPath($request);
+            if ($request->method() === 'GET' &&
+                $path === '/dropshipping/orders/' . $order->guid
+            ) {
+                $response = $this->makeOrderResponse(
+                    $order->guid,
+                    $order->items->first()->supplier_code,
+                    'shipping',
+                    1,
+                    $oldNumber
+                );
+                $response['trackingStatusCode'] = 1;
+                return Http::response($response, 200);
+            }
+            if ($request->method() === 'POST' &&
+                $path === '/dropshipping/orders/ttn/' . $order->guid
+            ) {
+                $posts++;
+                return Http::response(['message' => 'unknown result'], 500);
+            }
+            throw new RuntimeException('Unexpected HTTP: ' . $path);
+        });
+
+        $service = app(RozetkaTtnReissueService::class);
+        $thrown = false;
+        try {
+            $service->reissue($order);
+        } catch (Throwable $e) {
+            $thrown = true;
+        }
+
+        $attempt = RozetkaTtnReissueAttempt::query()
+            ->where('order_id', $order->id)
+            ->where('old_tracking_number', $oldNumber)
+            ->first();
+
+        $this->assertTrue(
+            $thrown && $attempt &&
+            $attempt->status === 'needs_review' &&
+            $posts === 1,
+            'HTTP 500 повинен залишити перевипуск на ручну перевірку.'
+        );
+
+        $blocked = false;
+        try {
+            $service->reissue($order->fresh(['items']));
+        } catch (Throwable $e) {
+            $blocked = true;
+        }
+        $this->assertTrue(
+            $blocked && $posts === 1,
+            'Повтор POST після HTTP 500 має бути заблокований.'
+        );
+
+        $this->line('OK: після HTTP 500 — needs_review, повторного POST немає.');
     }
 
     /**

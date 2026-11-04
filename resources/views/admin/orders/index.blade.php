@@ -562,6 +562,24 @@
                                     PDF
                                 </span>
                             @endif
+
+                            @if(\App\Services\Rozetka\RozetkaTtnReissueService::canReissue($order))
+                                <form
+                                    method="post"
+                                    action="{{ route('admin.orders.ttn.reissue', $order) }}"
+                                    class="d-inline-block ml-1 my-1"
+                                    onsubmit="return confirm('Перевипустити ТТН без зміни даних? Поточну накладну буде замінено через Rozetka. Продовжити?');"
+                                >
+                                    @csrf
+                                    <button
+                                        type="submit"
+                                        class="btn btn-sm btn-outline-warning"
+                                        @if(!config('services.rozetka.actions_enabled', false)) disabled @endif
+                                    >
+                                        Перевипустити ТТН
+                                    </button>
+                                </form>
+                            @endif
                         </td>
 
                         <td class="align-middle files-status">
