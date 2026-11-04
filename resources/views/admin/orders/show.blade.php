@@ -92,7 +92,28 @@
             </div>
 
             <div class="col-md-6">
-                <div><span class="text-muted">ТТН:</span> <span class="mono">{{ $order->tracking_number ?: '—' }}</span></div>
+                <div>
+                    <span class="text-muted">ТТН:</span>
+                    <span class="mono">{{ $order->tracking_number ?: '—' }}</span>
+
+                    @if(\App\Services\Rozetka\RozetkaTtnReissueService::canReissue($order))
+                        <form
+                            method="post"
+                            action="{{ route('admin.orders.ttn.reissue', $order) }}"
+                            class="d-inline-block ml-2"
+                            onsubmit="return confirm('Перевипустити ТТН без зміни даних? Поточну накладну буде замінено через Rozetka. Продовжити?');"
+                        >
+                            @csrf
+                            <button
+                                type="submit"
+                                class="btn btn-sm btn-outline-warning"
+                                @if(!config('services.rozetka.actions_enabled', false)) disabled @endif
+                            >
+                                Перевипустити ТТН
+                            </button>
+                        </form>
+                    @endif
+                </div>
                 @if(!empty($order->rozetka_status) && !empty($order->tracking_number))
                     <div class="mt-1">
                         <span class="text-muted">Статус ТТН (Rozetka):</span>
