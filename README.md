@@ -1,61 +1,56 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400"></a></p>
+# Laravel Order Operations Admin
 
-<p align="center">
-<a href="https://travis-ci.org/laravel/framework"><img src="https://travis-ci.org/laravel/framework.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://poser.pugx.org/laravel/framework/d/total.svg" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://poser.pugx.org/laravel/framework/v/stable.svg" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://poser.pugx.org/laravel/framework/license.svg" alt="License"></a>
-</p>
+A Laravel-based back-office application for managing e-commerce orders, packing information, and **Nova Poshta** shipping workflows.
 
-## About Laravel
+This repository is the **public portfolio snapshot** of an independently developed operations system. It shows the earlier order-management and fulfilment modules. The newer **Rozetka Supplier API** integrations and production-oriented automation are maintained in a separate private codebase.
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+## What the system does
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+- **Order management:** an admin interface for viewing orders, customers, delivery details, statuses, and order items.
+- **Packing data:** a product-dimensions catalogue with weights and multiple packaging places per product.
+- **Shipping workflow:** integration with Nova Poshta for creating and managing shipping documents (TTNs), including batch-processing utilities.
+- **Address handling:** support for delivery destinations and recipient details needed by the carrier.
+- **Documents and exports:** order attachments, download tracking, and spreadsheet export tools.
+- **Operational tooling:** Artisan commands and a Laravel service layer separating order data from delivery-provider requests.
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+## Tech stack
 
-## Learning Laravel
+| Area | Technologies |
+| --- | --- |
+| Backend | PHP, Laravel 8 |
+| Admin UI | Laravel Blade, Bootstrap |
+| Database | MySQL, Eloquent ORM |
+| Integrations | Nova Poshta API, external order data |
+| Utilities | Laravel Artisan, migrations, Excel exports |
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
+## Code structure
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains over 1500 video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+```text
+app/
+  Http/Controllers/Admin/       # Order, product and shipping admin workflows
+  Models/                       # Orders, products, packaging, files, TTN batches
+  Services/NovaPoshta/           # Nova Poshta API client and shipment logic
+  Console/Commands/             # Operational commands
+resources/views/admin/          # Blade admin screens
+database/migrations/            # Database schema
+routes/web.php                  # Admin routes
+```
 
-## Laravel Sponsors
+## Engineering focus
 
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the Laravel [Patreon page](https://patreon.com/taylorotwell).
+The project addresses practical fulfilment issues: orders with several items or physical packages, validation of delivery details, storing shipment identifiers, keeping operational records, and reducing repetitive work for managers.
 
-### Premium Partners
+The main design priority is to **keep order processing understandable and controllable** while using service classes for external API interactions.
 
-- **[Vehikl](https://vehikl.com/)**
-- **[Tighten Co.](https://tighten.co)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Cubet Techno Labs](https://cubettech.com)**
-- **[Cyber-Duck](https://cyber-duck.co.uk)**
-- **[Many](https://www.many.co.uk)**
-- **[Webdock, Fast VPS Hosting](https://www.webdock.io/en)**
-- **[DevSquad](https://devsquad.com)**
-- **[OP.GG](https://op.gg)**
+## About this public snapshot
 
-## Contributing
+- `main` represents an **earlier stage** of the application; it is **not** the active development branch.
+- The current private implementation includes additional Rozetka Supplier API features, document-status checks, automated TTN creation, guarded reissue operations, and fake-HTTP regression tests. Those later features are **not included in this snapshot**.
+- This is a code portfolio, **not** a ready-to-deploy SaaS product or a public hosted demo.
+- External credentials and any production configuration must be supplied separately. Never commit real API tokens or `.env` files.
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+## Author
 
-## Code of Conduct
+Developed by [Vyacheslav Filimonenko](https://github.com/filimonenkovyacheslav), Full-Stack Developer — PHP/Laravel, APIs, and operational integrations.
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
-
-## Security Vulnerabilities
-
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
-
-## License
-
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+> The Laravel framework is an independent open-source project. Public visibility of this application repository does not by itself grant a license to reuse its application-specific code.
